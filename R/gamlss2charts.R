@@ -43,7 +43,7 @@
 #' predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
 #'
 #' # example for gamlss
-#' if (require("quantreg")) {
+#' if (require("gamlss")) {
 #'   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
 #'     family = BCCG(), data = iris[1:100,])
 #'   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()

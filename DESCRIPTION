@@ -1,6 +1,6 @@
 Package: gamlss2charts
 Type: Package
-Title: Extra functionality for gamlss2 in growth charting
+Title: Additional functions for gamlss2 in growth charting
 Version: 0.1.0
 Author: Andrew A. Chen
 Maintainer: Andrew A. Chen <chenandr@musc.edu>

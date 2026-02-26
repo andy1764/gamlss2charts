@@ -30,7 +30,8 @@
 #' adjustment model. These offsets need to be specified in `newformula`. Then,
 #' the adjustment model is fit, adjustment parameters are combined with the
 #' offsets for `which.params`, and scores are computed. See references for more
-#' details.
+#' details. \link[gamlss]{gamlss} support is still limited to fixed effects,
+#' but workarounds are available for \link[gamlss]{random} effects.
 #'
 #' For `type="cent"`, this is called out-of-sample centile scoring.
 #' `type="resid"` returns the studentized residuals and `type="quantile"`

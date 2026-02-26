@@ -69,7 +69,8 @@ When \code{adjust=TRUE}, fixes the predictions from \code{object} as offsets for
 adjustment model. These offsets need to be specified in \code{newformula}. Then,
 the adjustment model is fit, adjustment parameters are combined with the
 offsets for \code{which.params}, and scores are computed. See references for more
-details.
+details. \link[gamlss]{gamlss} support is still limited to fixed effects,
+but workarounds are available for \link[gamlss]{random} effects.
 
 For \code{type="cent"}, this is called out-of-sample centile scoring.
 \code{type="resid"} returns the studentized residuals and \code{type="quantile"}
@@ -81,7 +82,7 @@ ft <- gamlss2(Sepal.Length ~ Sepal.Width + Species | Species,
 predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
 
 # example for gamlss
-if (require("quantreg")) {
+if (require("gamlss")) {
   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
     family = BCCG(), data = iris[1:100,])
   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()

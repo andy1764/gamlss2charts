@@ -6,7 +6,7 @@
 
 **License**: MIT License
 
-`gamlss2charts` includes additional functions based on gamlss2, with backwards compatibility for gamlss. Currently, our package contains `predict_score` for out-of-sample scoring (i.e. centile scoring) based on previous works (see references). 
+`gamlss2charts` includes additional functions based on gamlss2, with backwards compatibility for gamlss (WIP). Currently, our package contains `predict_score` for out-of-sample scoring (i.e. centile scoring) based on previous works (see references). 
 
 This package is still a work-in-progress and will be continually supported and updated to include additional functionalities.
 

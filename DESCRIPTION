@@ -1,11 +1,15 @@
 Package: gamlss2charts
 Type: Package
-Title: What the Package Does (Title Case)
+Title: Extra functionality for gamlss2 in growth charting
 Version: 0.1.0
-Author: Who wrote it
-Maintainer: The package maintainer <yourself@somewhere.net>
-Description: More about what it does (maybe more than one line)
-    Use four spaces when indenting paragraphs within the Description.
-License: What license is it under?
+Author: Andrew A. Chen
+Maintainer: Andrew A. Chen <chenandr@musc.edu>
+Description: Additional functions based on gamlss2, with backwards compatibility
+  for gamlss. 
+License: MIT License
 Encoding: UTF-8
 LazyData: true
+Depends: gamlss2
+Suggests: gamlss
+RoxygenNote: 7.3.2
+Roxygen: list(markdown = TRUE)

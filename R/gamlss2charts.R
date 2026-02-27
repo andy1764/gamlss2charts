@@ -149,9 +149,12 @@ predict_score.gamlss <-
       links <- predictAll(object, newdata = newdata, type = "link", terms = mterms)[which.params]
       params <- lapply(setNames(nm = c("mu", "sigma", "nu", "tau")[which.params]), function(x) {
         link <- object[[paste0(x, ".link")]]
-        switch(link,
-               "identity" = links[[x]],
-               "log" = exp(links[[x]]))
+        switch(
+          link,
+          "identity" = links[[x]],
+          "log" = exp(links[[x]]),
+          "logit" = exp(links[[x]])/(1+exp(links[[x]]))
+        )
       })
     }
 

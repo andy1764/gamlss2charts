@@ -33,9 +33,36 @@ ft <- gamlss2(Sepal.Length ~ Sepal.Width + Petal.Length + Petal.Width + Species 
               family = BCCG(), data = iris[1:100,])
 predict_score(ft, iris[-(1:100),], adjust = FALSE, rm.term = "Species") |> hist()
 predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
+
+# with two test batches, fixed effect in adjustment fit
+ft <- gamlss2(Sepal.Length ~ Sepal.Width + Petal.Length + Petal.Width,
+              family = BCCG(), data = iris[1:50,])
+predict_score(ft, iris[-(1:50),], adjust = FALSE) |> hist()
+predict_score(ft, iris[-(1:50),], 
+  newformula = y ~ offset(mu) + Species | offset(sigma) + Species) |> hist()
 ```
 
-## 3. Citations
+## 3. Backwards compatibility for gamlss (Warning: WIP)
+Our package supports basic functionality for the [gamlss](https://cran.r-project.org/web/packages/gamlss/index.html) package. Workarounds are still needed for certain model terms (including random effects, see below)
+
+```
+library(gamlss)
+ft <- gamlss(Sepal.Length ~ Sepal.Width + Petal.Length + Petal.Width + Species, ~ Species,
+              family = BCCG(), data = iris[1:100,])
+predict_score(ft, iris[-(1:100),], adjust = FALSE, rm.term = "Species") |> hist()
+predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
+
+# using random effects
+testris <- iris
+testris[-(1:100),]$Species <- "setosa" # set test batch to a batch in the train set
+
+ft <- gamlss(Sepal.Length ~ Sepal.Width + Petal.Length + Petal.Width + random(Species), ~ random(Species),
+             family = BCCG(), data = testris[1:100,])
+predict_score(ft, testris[-(1:100),], adjust = FALSE) |> hist()
+predict_score(ft, testris[-(1:100),]) |> hist()
+```
+
+## 4. Citations
 Please cite the following papers for out-of-sample centile scoring:
 
 > Dinga, R., Fraza, C. J., Bayer, J. M. M., Kia, S. M., Beckmann, C. F., & Marquand, A. F. (2021). Normative modeling of neuroimaging data using generalized additive models of location scale and shape (p. 2021.06.14.448106). bioRxiv. https://doi.org/10.1101/2021.06.14.448106

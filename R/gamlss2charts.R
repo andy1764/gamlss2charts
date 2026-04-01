@@ -86,7 +86,7 @@ predict_score.gamlss2 <-
       fit2 <- gamlss2::gamlss2(newformula, data = refdata, family = object$family)
 
       # get offsets for newdata
-      newdata$y <- refdata[[feat]]
+      newdata$y <- newdata[[feat]]
       pred <- predict(object, newdata = newdata, type = "link", terms = mterms)
       newdata <- cbind(newdata, pred)
 

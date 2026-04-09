@@ -65,8 +65,8 @@ predict_score.gamlss2 <-
            which.params = c("mu", "sigma")) {
     type = match.arg(type)
 
-    feat <- names(object$model)[1]
-    mterms <- c("Intercept", setdiff(names(object$model), c(feat, rm.term)))
+    feat <- all.vars(formula(object))[1]
+    mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
     which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
     if (is.null(refdata)) {
       refdata <- newdata

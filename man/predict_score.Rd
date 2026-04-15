@@ -77,20 +77,21 @@ For \code{type="cent"}, this is called out-of-sample centile scoring.
 returns the quantile residuals (matching quantiles to an N(0,1) distribution).
 }
 \examples{
+train <- iris[1:100,]
+train$Species <- droplevels(train$Species)
 ft <- gamlss2(Sepal.Length ~ Sepal.Width + Species | Species,
-  family = BCCG(), data = iris[1:100,])
+  family = BCCG(), data = train)
 predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
 
 # example for gamlss
 if (require("gamlss")) {
   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
-    family = BCCG(), data = iris[1:100,])
+    family = BCCG(), data = train)
   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
 }
 
 }
 \references{
-Dinga, R., Fraza, C. J., Bayer, J. M. M., Kia, S. M., Beckmann, C. F., & Marquand, A. F. (2021). Normative modeling of neuroimaging data using generalized additive models of location scale and shape (p. 2021.06.14.448106). bioRxiv. https://doi.org/10.1101/2021.06.14.448106
-
 Bethlehem, R. A. I., Seidlitz, J., White, S. R., Vogel, J. W., Anderson, K. M., Adamson, C., Adler, S., Alexopoulos, G. S., Anagnostou, E., Areces-Gonzalez, A., Astle, D. E., Auyeung, B., Ayub, M., Bae, J., Ball, G., Baron-Cohen, S., Beare, R., Bedford, S. A., Benegal, V., … Alexander-Bloch, A. F. (2022). Brain charts for the human lifespan. Nature, 604(7906), Article 7906. https://doi.org/10.1038/s41586-022-04554-y
+Dinga, R., Fraza, C. J., Bayer, J. M. M., Kia, S. M., Beckmann, C. F., & Marquand, A. F. (2021). Normative modeling of neuroimaging data using generalized additive models of location scale and shape (p. 2021.06.14.448106). bioRxiv. https://doi.org/10.1101/2021.06.14.448106
 }

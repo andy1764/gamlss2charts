@@ -2,4 +2,5 @@
 
 S3method(predict_score,gamlss)
 S3method(predict_score,gamlss2)
+S3method(predict_score,list)
 export(predict_score)

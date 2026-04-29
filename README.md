@@ -62,7 +62,33 @@ predict_score(ft, testris[-(1:100),], adjust = FALSE) |> hist()
 predict_score(ft, testris[-(1:100),]) |> hist()
 ```
 
-## 4. Citations
+## 4. Compatibility with *Nature*, 2022 brain charts
+Our package supports the model format from the Bethlehem et al. (2022) charts. Below is a working example after cloning https://github.com/brainchart/Lifespan to `~/GitHub/Lifespan/`:
+
+```
+library(gamlss2)
+
+source("~/GitHub/Lifespan/102.gamlss-recode.r")
+source("~/GitHub/Lifespan/301.functions.r")
+FIT <- readRDS("~/GitHub/Lifespan/Share/OriginalModels/FIT_GMV.rds")
+
+# generate age and sex
+set.seed(8888)
+newdat <- data.frame(age = rnorm(200, 50, 5),
+                     sex = c(rep("Male", 100), rep("Female", 100)))
+newdat$AgeTransformed <- log(newdat$age*365.25) # 2022 charts use log(age in days)
+POP.CURVE.RAW <- newdat[,c("AgeTransformed", "sex")]
+CURVE <- Apply.Param(NEWData=POP.CURVE.RAW, FITParam=FIT$param, Add.Derivative=FALSE)
+params <- CURVE[c("mu.pop", "sigma.pop", "nu.pop")]
+names(params) <- c("mu", "sigma", "nu")
+
+# generate GMV (in units of 10,000 mm3) values from chart parameters
+newdat$GMV <- rGGalt(200, mu = exp(params$mu), sigma = exp(params$sigma), nu = params$nu)
+predict_score(list(new = params), newdata = newdat, feat = "GMV", family = GGalt) |> hist()
+```
+
+
+## 5. Citations
 Please cite the following papers for out-of-sample centile scoring:
 
 > Dinga, R., Fraza, C. J., Bayer, J. M. M., Kia, S. M., Beckmann, C. F., & Marquand, A. F. (2021). Normative modeling of neuroimaging data using generalized additive models of location scale and shape (p. 2021.06.14.448106). bioRxiv. https://doi.org/10.1101/2021.06.14.448106

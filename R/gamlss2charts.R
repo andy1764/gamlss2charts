@@ -5,12 +5,12 @@
 #' the new dataset (e.g. adjusting for batch effects). Adjustment model is fit
 #' using reference data input as `refdata` and specified in `newformula`.
 #'
-#' @param object Object of class `gamlss2`, typically output of
-#'   \link[gamlss2]{gamlss2}
+#' @param object Object of class `gamlss2`, `gamlss`, or a `list` of params.
+#'   See details
 #' @param newdata Data frame containing new observations
 #' @param refdata Data frame containing reference observations, typically
 #'   healthy individuals. Can overlap with `newdata`. If NULL, uses newdata
-#' @param rm.term String indicating term to remove from original model fit,
+#' @param rm.term String indicating factor to remove from original model fit,
 #'   usually a batch variable (e.g. setting random effects to zero)
 #' @param adjust Whether to fit adjustment parameters on the new data (e.g.
 #'   getting batch adjustments for a new site)
@@ -31,7 +31,11 @@
 #' the adjustment model is fit, adjustment parameters are combined with the
 #' offsets for `which.params`, and scores are computed. See references for more
 #' details. \link[gamlss]{gamlss} support is still limited to fixed effects,
-#' but workarounds are available for \link[gamlss]{random} effects.
+#' but workarounds are available for \link[gamlss]{random} effects. Lists of
+#' parameters can be provided as `object`. The list needs to have names `new`
+#' and/or `ref`, where parameters correspond to `newdata` and `refdata`
+#' respectively. `feat` and `family` need to be specified, and should match with
+#' the `newdata` and distribution used to fit the original parameters.
 #'
 #' For `type="cent"`, this is called out-of-sample centile scoring.
 #' `type="resid"` returns the studentized residuals and `type="quantile"`
@@ -47,6 +51,8 @@
 #'
 #' # example for gamlss
 #' if (require("gamlss")) {
+#'   train <- iris[1:100,]
+#'   train$Species <- droplevels(train$Species)
 #'   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
 #'     family = BCCG(), data = train)
 #'   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
@@ -73,6 +79,7 @@ predict_score.gamlss2 <-
       refdata <- newdata
     }
 
+    # match rm.term factor levels to original fit
     if (!is.null(rm.term)) {
       object$xlevels[which.params] <- lapply(
         object$xlevels[which.params], function(p) {
@@ -168,5 +175,50 @@ predict_score.gamlss <-
       type,
       "cent" = do.call(get(paste0("p", object$family[1])), c(list(q = newdata[,feat]), params)),
       "resid" = (newdata[,feat] - params[,1])/params[,2]
+    )
+  }
+
+#' @rdname predict_score
+#' @export
+predict_score.list <-
+  function(object, newdata, refdata = NULL, feat, family,
+           type = c("cent", "resid", "quantile"),
+           adjust = TRUE, rm.term = NULL,
+           newformula = y ~ offset(mu) | offset(sigma),
+           which.params = c("mu", "sigma")) {
+    type = match.arg(type)
+
+    which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
+    if (is.null(refdata)) {
+      refdata <- newdata
+      pred2 <- object$new
+    }
+
+    newdata$y <- newdata[[feat]]
+    refdata$y <- refdata[[feat]]
+    pred <- object$new
+    fit <- gamlss2::gamlss2(y ~ 1, data = newdata, family = family)
+
+    if (adjust) {
+      # get offsets for refdata and fit adjustment model
+      refdata <- cbind(refdata, pred2)
+      fit2 <- gamlss2::gamlss2(newformula, data = refdata, family = family)
+
+      # get offsets for newdata
+      newdata <- cbind(newdata, pred)
+
+      # apply fit2 estimates, which are shifts to the original parameters
+      shift <- predict(fit2, newdata = newdata, type = "link")
+      shift[,-which.params] <- 0
+      params <- fit2$family$map2par(pred + shift)
+    } else {
+      params <- fit$family$map2par(pred)
+    }
+
+    switch(
+      type,
+      "cent" = fit$family$cdf(q = newdata[,feat], par = params),
+      "resid" = (newdata[,feat] - params[,1])/params[,2],
+      "quantile" = fit$family$rqres(newdata[,feat], par = params)
     )
   }

@@ -4,6 +4,7 @@
 \alias{predict_score}
 \alias{predict_score.gamlss2}
 \alias{predict_score.gamlss}
+\alias{predict_score.list}
 \title{Get GAMLSS-based scores for new data, using gamlss2 fit}
 \usage{
 predict_score(object, ...)
@@ -29,10 +30,23 @@ predict_score(object, ...)
   newformula = y ~ offset(mu) | offset(sigma),
   which.params = c("mu", "sigma")
 )
+
+\method{predict_score}{list}(
+  object,
+  newdata,
+  refdata = NULL,
+  feat,
+  family,
+  type = c("cent", "resid", "quantile"),
+  adjust = TRUE,
+  rm.term = NULL,
+  newformula = y ~ offset(mu) | offset(sigma),
+  which.params = c("mu", "sigma")
+)
 }
 \arguments{
-\item{object}{Object of class \code{gamlss2}, typically output of
-\link[gamlss2]{gamlss2}}
+\item{object}{Object of class \code{gamlss2}, \code{gamlss}, or a \code{list} of params.
+See details}
 
 \item{newdata}{Data frame containing new observations}
 
@@ -44,7 +58,7 @@ healthy individuals. Can overlap with \code{newdata}. If NULL, uses newdata}
 \item{adjust}{Whether to fit adjustment parameters on the new data (e.g.
 getting batch adjustments for a new site)}
 
-\item{rm.term}{String indicating term to remove from original model fit,
+\item{rm.term}{String indicating factor to remove from original model fit,
 usually a batch variable (e.g. setting random effects to zero)}
 
 \item{newformula}{If \code{adjust=TRUE}, adjustment fit uses this formula. Need to
@@ -70,7 +84,11 @@ adjustment model. These offsets need to be specified in \code{newformula}. Then,
 the adjustment model is fit, adjustment parameters are combined with the
 offsets for \code{which.params}, and scores are computed. See references for more
 details. \link[gamlss]{gamlss} support is still limited to fixed effects,
-but workarounds are available for \link[gamlss]{random} effects.
+but workarounds are available for \link[gamlss]{random} effects. Lists of
+parameters can be provided as \code{object}. The list needs to have names \code{new}
+and/or \code{ref}, where parameters correspond to \code{newdata} and \code{refdata}
+respectively. \code{feat} and \code{family} need to be specified, and should match with
+the \code{newdata} and distribution used to fit the original parameters.
 
 For \code{type="cent"}, this is called out-of-sample centile scoring.
 \code{type="resid"} returns the studentized residuals and \code{type="quantile"}
@@ -85,6 +103,8 @@ predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
 
 # example for gamlss
 if (require("gamlss")) {
+  train <- iris[1:100,]
+  train$Species <- droplevels(train$Species)
   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
     family = BCCG(), data = train)
   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()

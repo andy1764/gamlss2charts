@@ -38,8 +38,9 @@
 #' the `newdata` and distribution used to fit the original parameters.
 #'
 #' For `type="cent"`, this is called out-of-sample centile scoring.
-#' `type="resid"` returns the studentized residuals and `type="quantile"`
-#' returns the quantile residuals (matching quantiles to an N(0,1) distribution).
+#' `type="resid"` returns the residuals and `type="zscore"` returns z-scores.
+#' `type="quantile"` returns the quantile residuals (matching centile scores to
+#' an N(0,1) distribution). `type="parameter"` returns the fitted parameters.
 #'
 #' @rdname predict_score
 #' @examples
@@ -52,7 +53,6 @@
 #' # example for gamlss
 #' if (require("gamlss")) {
 #'   train <- iris[1:100,]
-#'   train$Species <- droplevels(train$Species)
 #'   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
 #'     family = BCCG(), data = train)
 #'   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
@@ -66,7 +66,7 @@ predict_score <- function(object, ...) UseMethod("predict_score")
 #' @export
 predict_score.gamlss2 <-
   function(object, newdata, refdata = NULL,
-           type = c("cent", "resid", "quantile"),
+           type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
@@ -114,8 +114,10 @@ predict_score.gamlss2 <-
     switch(
       type,
       "cent" = object$family$cdf(q = newdata[,feat], par = params),
-      "resid" = (newdata[,feat] - params[,1])/params[,2],
-      "quantile" = object$family$rqres(newdata[,feat], par = params)
+      "resid" = newdata[,feat] - params[,1],
+      "zscore" = (newdata[,feat] - params[,1])/params[,2],
+      "quantile" = object$family$rqres(newdata[,feat], par = params),
+      "parameter" = params
     )
   }
 
@@ -123,7 +125,7 @@ predict_score.gamlss2 <-
 #' @export
 predict_score.gamlss <-
   function(object, newdata, refdata = NULL,
-           type = c("cent", "resid"),
+           type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
@@ -174,7 +176,10 @@ predict_score.gamlss <-
     switch(
       type,
       "cent" = do.call(get(paste0("p", object$family[1])), c(list(q = newdata[,feat]), params)),
-      "resid" = (newdata[,feat] - params[,1])/params[,2]
+      "resid" = newdata[,feat] - params[,1],
+      "quantile" = qnorm(do.call(get(paste0("p", object$family[1])), c(list(q = newdata[,feat]), params))),
+      "zscore" = (newdata[,feat] - params[,1])/params[,2],
+      "parameter" = params
     )
   }
 
@@ -182,7 +187,7 @@ predict_score.gamlss <-
 #' @export
 predict_score.list <-
   function(object, newdata, refdata = NULL, feat, family,
-           type = c("cent", "resid", "quantile"),
+           type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
@@ -218,7 +223,9 @@ predict_score.list <-
     switch(
       type,
       "cent" = fit$family$cdf(q = newdata[,feat], par = params),
-      "resid" = (newdata[,feat] - params[,1])/params[,2],
-      "quantile" = fit$family$rqres(newdata[,feat], par = params)
+      "resid" = newdata[,feat] - params[,1],
+      "zscore" = (newdata[,feat] - params[,1])/params[,2],
+      "quantile" = fit$family$rqres(newdata[,feat], par = params),
+      "parameter" = params
     )
   }

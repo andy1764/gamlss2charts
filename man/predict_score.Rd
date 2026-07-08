@@ -13,7 +13,7 @@ predict_score(object, ...)
   object,
   newdata,
   refdata = NULL,
-  type = c("cent", "resid", "quantile"),
+  type = c("cent", "resid", "zscore", "quantile", "parameter"),
   adjust = TRUE,
   rm.term = NULL,
   newformula = y ~ offset(mu) | offset(sigma),
@@ -24,7 +24,7 @@ predict_score(object, ...)
   object,
   newdata,
   refdata = NULL,
-  type = c("cent", "resid"),
+  type = c("cent", "resid", "zscore", "quantile", "parameter"),
   adjust = TRUE,
   rm.term = NULL,
   newformula = y ~ offset(mu) | offset(sigma),
@@ -37,7 +37,7 @@ predict_score(object, ...)
   refdata = NULL,
   feat,
   family,
-  type = c("cent", "resid", "quantile"),
+  type = c("cent", "resid", "zscore", "quantile", "parameter"),
   adjust = TRUE,
   rm.term = NULL,
   newformula = y ~ offset(mu) | offset(sigma),
@@ -91,8 +91,9 @@ respectively. \code{feat} and \code{family} need to be specified, and should mat
 the \code{newdata} and distribution used to fit the original parameters.
 
 For \code{type="cent"}, this is called out-of-sample centile scoring.
-\code{type="resid"} returns the studentized residuals and \code{type="quantile"}
-returns the quantile residuals (matching quantiles to an N(0,1) distribution).
+\code{type="resid"} returns the residuals and \code{type="zscore"} returns z-scores.
+\code{type="quantile"} returns the quantile residuals (matching centile scores to
+an N(0,1) distribution). \code{type="parameter"} returns the fitted parameters.
 }
 \examples{
 train <- iris[1:100,]
@@ -104,7 +105,6 @@ predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
 # example for gamlss
 if (require("gamlss")) {
   train <- iris[1:100,]
-  train$Species <- droplevels(train$Species)
   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
     family = BCCG(), data = train)
   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()

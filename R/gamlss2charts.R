@@ -59,6 +59,7 @@
 #' }
 #'
 #' @references Bethlehem, R. A. I., Seidlitz, J., White, S. R., Vogel, J. W., Anderson, K. M., Adamson, C., Adler, S., Alexopoulos, G. S., Anagnostou, E., Areces-Gonzalez, A., Astle, D. E., Auyeung, B., Ayub, M., Bae, J., Ball, G., Baron-Cohen, S., Beare, R., Bedford, S. A., Benegal, V., … Alexander-Bloch, A. F. (2022). Brain charts for the human lifespan. Nature, 604(7906), Article 7906. https://doi.org/10.1038/s41586-022-04554-y
+#'
 #' Dinga, R., Fraza, C. J., Bayer, J. M. M., Kia, S. M., Beckmann, C. F., & Marquand, A. F. (2021). Normative modeling of neuroimaging data using generalized additive models of location scale and shape (p. 2021.06.14.448106). bioRxiv. https://doi.org/10.1101/2021.06.14.448106
 predict_score <- function(object, ...) UseMethod("predict_score")
 
@@ -71,6 +72,10 @@ predict_score.gamlss2 <-
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
     type = match.arg(type)
+
+    if(object$family$family != "NO" & type == "zscore") {
+      warning("Z-scores may not be valid for families other than NO")
+    }
 
     feat <- all.vars(formula(object))[1]
     mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
@@ -130,6 +135,10 @@ predict_score.gamlss <-
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
     type = match.arg(type)
+
+    if(object$family[1] != "NO" & type == "zscore") {
+      warning("Z-scores may not be valid for families other than NO")
+    }
 
     feat <- as.character(object$mu.formula[[2]])
     mterms <- c("Intercept", setdiff(names(object$model), c(feat, rm.term)))
@@ -192,6 +201,10 @@ predict_score.list <-
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
     type = match.arg(type)
+
+    if(family != "NO" & type == "zscore") {
+      warning("Z-scores may not be valid for families other than NO")
+    }
 
     which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
     if (is.null(refdata)) {

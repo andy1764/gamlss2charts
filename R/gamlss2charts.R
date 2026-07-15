@@ -76,31 +76,21 @@ predict_score <- function(object, ...) UseMethod("predict_score")
 
 #' @rdname predict_score
 #' @export
-# ---- Method for gamlss2 fits -------------------------------------------------
 predict_score.gamlss2 <-
   function(object, newdata, refdata = NULL,
            # `type` default is the first element, "cent" (centile score).
            type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
-           # gamlss2 formula syntax: `|` separates the model for each distribution
-           # parameter. offset(mu)/offset(sigma) freeze the original model's link-
-           # scale predictions as fixed offsets in the adjustment model.
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
-    # Validate `type` against the allowed set and reduce to a single value.
     type = match.arg(type)
 
-    # A z-score (y - mu)/sigma is only a true N(0,1) deviate for the Normal
-    # family ("NO"); warn if the user requests it for any other distribution.
     if(object$family$family != "NO" & type == "zscore") {
       warning("Z-scores may not be valid for families other than NO")
     }
 
-    # Response variable name = first variable in the model formula.
     feat <- all.vars(formula(object))[1]
-    # Terms to predict from: all formula variables except the response and the
-    # term being removed. Excluding `rm.term` here is how its effect (e.g. a
-    # batch / site random effect) is zeroed out of the predictions.
+    # Terms to predict from: all variables except feat and rm.term
     mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
     # Turn parameter names into named integer column indices (mu=1, sigma=2,
     # nu=3, tau=4); used later to pick which parameter columns get adjusted.
@@ -108,13 +98,14 @@ predict_score.gamlss2 <-
     # If no reference data is given, use newdata as its own reference.
     if (is.null(refdata)) {
       refdata <- newdata
+    } else {
+      #confirm all newdata levels are in refdata
+      stopifnot("Not all levels of rm.term in newdata are present in refdata " = levels(newdata[[rm.term]]) %in% levels(refdata[[rm.term]]))
     }
 
-    # match rm.term factor levels to original fit
-    # newdata/refdata may contain factor levels the model never saw (e.g. a new
-    # site). predict() would error on unseen levels, so append the new levels to
-    # the fit's stored xlevels and reorder refdata's levels to match. The effect
-    # is still excluded from prediction via `mterms`. - UPDATED
+    # match rm.term factor levels to original fit, appending unseen levels
+    # to the fit's stored xlevels and reorder refdata's levels to match. The effect
+    # is still excluded from prediction via `mterms`
     if (!is.null(rm.term)) {
       oldlevels <- object$xlevels[[rm.term]]
       newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
@@ -125,7 +116,7 @@ predict_score.gamlss2 <-
       refdata$y <- refdata[[feat]]  # `newformula`'s LHS is `y`, so copy the response into `y`
       # get offsets for refdata and fit adjustment model
       # Original model's link-scale predictions on refdata (rm.term excluded).
-      # These are the frozen offsets fed to the adjustment model. ####HOW DOES THIS WORK IF refdata <- newdata???
+      # These are the frozen offsets fed to the adjustment model.
       pred2 <- predict(object, newdata = refdata, type = "link", terms = mterms)
       refdata <- cbind(refdata, pred2)  # add mu/sigma... columns for the offset() terms
       # Fit the adjustment model. Because the formula is all offsets, fit2 only
@@ -134,13 +125,11 @@ predict_score.gamlss2 <-
       fit2 <- gamlss2::gamlss2(newformula, data = refdata, family = object$family)
 
       # get offsets for newdata
-      # Same offset extraction for the observations we actually want to score.
       newdata$y <- newdata[[feat]]
       pred <- predict(object, newdata = newdata, type = "link", terms = mterms)
       newdata <- cbind(newdata, pred)
 
-      # apply fit2 estimates, which are shifts to the original parameters
-      # Adjustment model's link-scale prediction on newdata.
+      # apply fit2 estimates (shifts to the original parameters) to newdata
       shift <- predict(fit2, newdata = newdata, type = "link")
       shift[,-which.params] <- 0  # zero out any parameters not requested for adjustment
       # Combine frozen offsets with estimated shifts on the link scale, then
@@ -177,12 +166,18 @@ predict_score.gamlss2 <-
 # if NULL, predict.gamlss re-evaluates it from the model call (the same contract
 # the rest of the method already relies on). Returns a data.frame, one column per
 # parameter.
-.pop_offset_gamlss <- function(object, data, rm.term, params, traindata = NULL) {
+.pop_offset_gamlss <- function(object, scoredata, rm.term, params, traindata = NULL) {
+  # Keep only the variables the model actually uses
+  model_vars <- unique(unlist(lapply(params, function(p)
+    all.vars(object[[paste0(p, ".formula")]]))))
+  scoredata <- scoredata[, intersect(model_vars, names(scoredata)), drop = FALSE]
+
   out <- lapply(params, function(p) {
     fo <- object[[paste0(p, ".formula")]]
     drop_term <- !is.null(rm.term) && !is.null(fo) && rm.term %in% all.vars(fo)
+    #eval if rm.term is present in this moment
     if (drop_term) {
-      args <- list(object, what = p, newdata = data, type = "terms")
+      args <- list(object, what = p, newdata = scoredata, type = "terms")
       if (!is.null(traindata)) args$data <- traindata
       tm <- do.call(predict, args)
       ic <- attr(tm, "constant"); if (is.null(ic)) ic <- 0
@@ -194,7 +189,7 @@ predict_score.gamlss2 <-
       }, logical(1))
       ic + rowSums(tm[, !drop, drop = FALSE])
     } else {
-      args <- list(object, what = p, newdata = data, type = "link")
+      args <- list(object, what = p, newdata = scoredata, type = "link")
       if (!is.null(traindata)) args$data <- traindata
       as.numeric(do.call(predict, args))
     }
@@ -204,11 +199,6 @@ predict_score.gamlss2 <-
 
 #' @rdname predict_score
 #' @export
-# ---- Method for gamlss fits (older gamlss package) ---------------------------
-# Same overall logic as the gamlss2 method, but adapted to the gamlss object
-# layout and API: predictAll() instead of predict(type="parameter"), a character
-# `family` vector, per-parameter link functions, and distribution functions
-# looked up by name (pNO, pBCCG, ...).
 predict_score.gamlss <-
   function(object, newdata, refdata = NULL,
            type = c("cent", "resid", "zscore", "quantile", "parameter"),
@@ -217,15 +207,11 @@ predict_score.gamlss <-
            which.params = c("mu", "sigma"), traindata = NULL) {
     type = match.arg(type)
 
-    # In gamlss, $family is a character vector; [1] is the family code (e.g. "NO").
     if(object$family[1] != "NO" & type == "zscore") {
       warning("Z-scores may not be valid for families other than NO")
     }
 
-    # Response name: LHS of the mu formula. mu.formula[[2]] is the response symbol.
     feat <- as.character(object$mu.formula[[2]])
-    # Terms to predict from: columns of the stored model frame, minus response and rm.term.
-    
     ###EDIT: object$model returns NULL, borrowing code from gamlss2 method - may
     #need to update to list_predictors depending on robustness to smooths, models 
     #saved elsewhere, etc
@@ -233,23 +219,22 @@ predict_score.gamlss <-
     which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
     if (is.null(refdata)) {
       refdata <- newdata
+    } else {
+      #confirm all newdata levels are in refdata
+      stopifnot("Not all levels of rm.term in newdata are present in refdata " = levels(newdata[[rm.term]]) %in% levels(refdata[[rm.term]]))
     }
 
-    # Append unseen factor levels for rm.term.
-    # rm.term may enter several distribution parameters ("moments"); gamlss stores
-    # levels per moment as <param>.xlevels. Register any new levels in every moment
-    # where rm.term appears so predict() accepts the new site -- this is needed for
-    # a FIXED factor whether or not `adjust` is TRUE, because even the type="terms"
-    # prediction in .pop_offset_gamlss() validates factor levels before we drop the
-    # column. A random effect (random(site)) never appears in *.xlevels, so the
+    # Find rm.term in any moment and append unseen factor levels
+    # A random effect (random(site)) never appears in *.xlevels, so the
     # loop simply matches nothing and we proceed (it is dropped later as an NA
     # column); hence there is deliberately no error when `updated` stays FALSE.
     if (!is.null(rm.term)) {
-      for (p in object$parameters) {                      # e.g. c("mu","sigma")
+      for (p in object$parameters) {                      
         slot <- paste0(p, ".xlevels")
         if (rm.term %in% names(object[[slot]])) {
           oldlevels <- object[[slot]][[rm.term]]
-          newlevels <- setdiff(levels(newdata[[rm.term]]), oldlevels)
+          newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
+          stopifnot("Cannot compute rm.term effects for more than 1 unseen batch level" = length(newlevels)<=1)
           object[[slot]][[rm.term]] <- c(oldlevels, newlevels)
         }
       }
@@ -257,10 +242,6 @@ predict_score.gamlss <-
 
     if (adjust) {
       # get offsets for refdata and fit adjustment model
-      # Population-level, batch-removed link-scale offsets. .pop_offset_gamlss()
-      # drops rm.term via type = "terms", so this works for fixed factors, smooths
-      # and random effects alike (predictAll() would return NA for an unseen
-      # random-effect level).
       off_ref <- .pop_offset_gamlss(object, refdata, rm.term, object$parameters, traindata)
       refdata <- cbind(refdata, off_ref)   # add mu/sigma... columns for the offsets
       refdata$y <- refdata[[feat]]         # `newformula` LHS is `y`
@@ -293,9 +274,6 @@ predict_score.gamlss <-
       # for the switch() below -- see the "resid"/"zscore" cases.
     }
 
-    # Score the observations. gamlss has no unified family object, so the CDF is
-    # looked up by name: get(paste0("p", family)) e.g. pBCCG, called via do.call
-    # with the parameter list.
     switch(
       type,
       "cent" = do.call(get(paste0("p", object$family[1])), c(list(q = newdata[,feat]), params)),
@@ -312,10 +290,6 @@ predict_score.gamlss <-
 
 #' @rdname predict_score
 #' @export
-# ---- Method for a plain list of pre-computed parameters -----------------------
-# Use when you have no fitted model object, only parameters. Pass a list with
-# $new (params for newdata) and optionally $ref (params for refdata), plus `feat`
-# and `family` explicitly, since there is no model object to read them from.
 predict_score.list <-
   function(object, newdata, refdata = NULL, feat, family,
            type = c("cent", "resid", "zscore", "quantile", "parameter"),

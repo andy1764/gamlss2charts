@@ -20,6 +20,10 @@
 #'   mu and sigma values from `object`. See Details
 #' @param which.params Parameters to adjust
 #' @param type Type of score to compute. See Details
+#' @param traindata Data originally used to fit `object` (`gamlss` method only).
+#'   Optional: if `NULL`, `predict()` re-evaluates the training data from the
+#'   model call (works when it is still in scope). Passing it explicitly is more
+#'   robust, especially for models with smooths or random effects.
 #'
 #' @return Vector of scores of length equal to number of rows in `newdata`
 #' @export
@@ -30,8 +34,12 @@
 #' adjustment model. These offsets need to be specified in `newformula`. Then,
 #' the adjustment model is fit, adjustment parameters are combined with the
 #' offsets for `which.params`, and scores are computed. See references for more
-#' details. \link[gamlss]{gamlss} support is still limited to fixed effects,
-#' but workarounds are available for \link[gamlss]{random} effects. Lists of
+#' details. For \link[gamlss]{gamlss} fits with `adjust=TRUE`, the batch term
+#' `rm.term` may be a fixed factor, a smooth, or a \link[gamlss]{random} effect:
+#' offsets are taken as population-level (`type="terms"`) predictions with the
+#' `rm.term` contribution removed, and its site-specific shift is re-estimated by
+#' the adjustment model. (With `adjust=FALSE`, random effects are not supported,
+#' since predicting an unseen level returns `NA`.) Lists of
 #' parameters can be provided as `object`. The list needs to have names `new`
 #' and/or `ref`, where parameters correspond to `newdata` and `refdata`
 #' respectively. `feat` and `family` need to be specified, and should match with
@@ -158,6 +166,42 @@ predict_score.gamlss2 <-
     )
   }
 
+# ---- internal helper: population-level offsets for the gamlss method ---------
+# Returns link-scale predictions for each `params` element with the batch term
+# `rm.term` removed (i.e. set to its population level). It uses type = "terms"
+# and drops the rm.term column, which works uniformly for fixed factors, smooths
+# (pb(), s()) and random effects (random(site)) -- the last of which predictAll()
+# cannot handle, returning NA at an unseen level. When `rm.term` is not part of a
+# given parameter's formula, the full type = "link" prediction is returned.
+# `traindata`, if supplied, is passed to predict() as the original fitting data;
+# if NULL, predict.gamlss re-evaluates it from the model call (the same contract
+# the rest of the method already relies on). Returns a data.frame, one column per
+# parameter.
+.pop_offset_gamlss <- function(object, data, rm.term, params, traindata = NULL) {
+  out <- lapply(params, function(p) {
+    fo <- object[[paste0(p, ".formula")]]
+    drop_term <- !is.null(rm.term) && !is.null(fo) && rm.term %in% all.vars(fo)
+    if (drop_term) {
+      args <- list(object, what = p, newdata = data, type = "terms")
+      if (!is.null(traindata)) args$data <- traindata
+      tm <- do.call(predict, args)
+      ic <- attr(tm, "constant"); if (is.null(ic)) ic <- 0
+      # drop only columns whose variables include rm.term (matches "random(site)"
+      # and "site", but not look-alikes such as "prestige_site")
+      drop <- vapply(colnames(tm), function(cn) {
+        v <- tryCatch(all.vars(stats::reformulate(cn)), error = function(e) character(0))
+        rm.term %in% v
+      }, logical(1))
+      ic + rowSums(tm[, !drop, drop = FALSE])
+    } else {
+      args <- list(object, what = p, newdata = data, type = "link")
+      if (!is.null(traindata)) args$data <- traindata
+      as.numeric(do.call(predict, args))
+    }
+  })
+  as.data.frame(setNames(out, params))
+}
+
 #' @rdname predict_score
 #' @export
 # ---- Method for gamlss fits (older gamlss package) ---------------------------
@@ -170,7 +214,7 @@ predict_score.gamlss <-
            type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
            newformula = y ~ offset(mu) | offset(sigma),
-           which.params = c("mu", "sigma")) {
+           which.params = c("mu", "sigma"), traindata = NULL) {
     type = match.arg(type)
 
     # In gamlss, $family is a character vector; [1] is the family code (e.g. "NO").
@@ -192,48 +236,45 @@ predict_score.gamlss <-
     }
 
     # Append unseen factor levels for rm.term.
+    # rm.term may enter several distribution parameters ("moments"); gamlss stores
+    # levels per moment as <param>.xlevels. Register any new levels in every moment
+    # where rm.term appears so predict() accepts the new site -- this is needed for
+    # a FIXED factor whether or not `adjust` is TRUE, because even the type="terms"
+    # prediction in .pop_offset_gamlss() validates factor levels before we drop the
+    # column. A random effect (random(site)) never appears in *.xlevels, so the
+    # loop simply matches nothing and we proceed (it is dropped later as an NA
+    # column); hence there is deliberately no error when `updated` stays FALSE.
     if (!is.null(rm.term)) {
-      # rm.term may enter several distribution parameters ("moments"); gamlss
-      # stores levels per moment as <param>.xlevels. Update the stored levels in
-      # every moment where rm.term appears so predict() accepts the new site.
-      updated <- FALSE
       for (p in object$parameters) {                      # e.g. c("mu","sigma")
         slot <- paste0(p, ".xlevels")
         if (rm.term %in% names(object[[slot]])) {
           oldlevels <- object[[slot]][[rm.term]]
           newlevels <- setdiff(levels(newdata[[rm.term]]), oldlevels)
           object[[slot]][[rm.term]] <- c(oldlevels, newlevels)
-          updated <- TRUE
         }
       }
-      stopifnot(updated)                                  # rm.term not found in any moment
     }
 
     if (adjust) {
       # get offsets for refdata and fit adjustment model
-      # predictAll() predicts all distribution parameters at once; subset by
-      # object$parameters (the fitted parameter names) to keep them in order.
-      pred2 <- predictAll(object, newdata = refdata, type = "link", terms = mterms)[object$parameters]
-      refdata <- cbind(refdata, pred2)     # add mu/sigma... columns for the offsets
+      # Population-level, batch-removed link-scale offsets. .pop_offset_gamlss()
+      # drops rm.term via type = "terms", so this works for fixed factors, smooths
+      # and random effects alike (predictAll() would return NA for an unseen
+      # random-effect level).
+      off_ref <- .pop_offset_gamlss(object, refdata, rm.term, object$parameters, traindata)
+      refdata <- cbind(refdata, off_ref)   # add mu/sigma... columns for the offsets
       refdata$y <- refdata[[feat]]         # `newformula` LHS is `y`
       fit2 <- gamlss2::gamlss2(newformula, data = refdata, family = object$family[1])
 
-      # get offsets for newdata
-      pred <- predictAll(object, newdata = newdata, type = "link", terms = mterms)[object$parameters]
-      newdata <- cbind(newdata, pred)
-      # POTENTIAL BUG: assigns the REFDATA response into newdata$y (should almost
-      # certainly be newdata[[feat]]). It happens to be harmless in this method
-      # because newdata$y is never read afterwards (predict(fit2) uses the offset
-      # columns, and the final switch uses newdata[,feat]) -- but it is wrong, and
-      # will error if refdata and newdata differ in number of rows.
-      # newdata$y <- refdata[[feat]] #commented out for testing
+      # get offsets for newdata (same computation on the observations to score)
+      off_new <- .pop_offset_gamlss(object, newdata, rm.term, object$parameters, traindata)
+      newdata <- cbind(newdata, off_new)
 
       # apply fit2 estimates, which are shifts to the original parameters
       shift <- predict(fit2, newdata = newdata, type = "link")
       shift[,-which.params] <- 0
-      # data.frame(pred): the offset columns as a data.frame so it adds elementwise
-      # to `shift`. Same potential offset double-counting note as the gamlss2 method.
-      params <- family(fit2)$map2par(data.frame(pred) + shift)
+      # off_new is a data.frame of the offset columns, added elementwise to shift.
+      params <- family(fit2)$map2par(off_new + shift)
     } else {
       # No adjustment. predictAll(type="link") returns link-scale values, so invert
       # each parameter's link by hand using the stored mu.link/sigma.link/... .

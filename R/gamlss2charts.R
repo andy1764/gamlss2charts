@@ -53,6 +53,7 @@
 #' # example for gamlss
 #' if (require("gamlss")) {
 #'   train <- iris[1:100,]
+#'   train$Species <- droplevels(train$Species)
 #'   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
 #'     family = BCCG(), data = train)
 #'   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
@@ -180,18 +181,32 @@ predict_score.gamlss <-
     # Response name: LHS of the mu formula. mu.formula[[2]] is the response symbol.
     feat <- as.character(object$mu.formula[[2]])
     # Terms to predict from: columns of the stored model frame, minus response and rm.term.
-    mterms <- c("Intercept", setdiff(names(object$model), c(feat, rm.term)))
+    
+    ###EDIT: object$model returns NULL, borrowing code from gamlss2 method - may
+    #need to update to list_predictors depending on robustness to smooths, models 
+    #saved elsewhere, etc
+    mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
     which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
     if (is.null(refdata)) {
       refdata <- newdata
     }
 
-    # Append unseen factor levels for rm.term. gamlss stores a flat xlevels list
-    # (not per-parameter), so this is a single append rather than a loop.
+    # Append unseen factor levels for rm.term.
     if (!is.null(rm.term)) {
-      oldlevels <- object$xlevels[[rm.term]]
-      newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
-      object$xlevels[[rm.term]] <- c(oldlevels, newlevels)
+      # rm.term may enter several distribution parameters ("moments"); gamlss
+      # stores levels per moment as <param>.xlevels. Update the stored levels in
+      # every moment where rm.term appears so predict() accepts the new site.
+      updated <- FALSE
+      for (p in object$parameters) {                      # e.g. c("mu","sigma")
+        slot <- paste0(p, ".xlevels")
+        if (rm.term %in% names(object[[slot]])) {
+          oldlevels <- object[[slot]][[rm.term]]
+          newlevels <- setdiff(levels(newdata[[rm.term]]), oldlevels)
+          object[[slot]][[rm.term]] <- c(oldlevels, newlevels)
+          updated <- TRUE
+        }
+      }
+      stopifnot(updated)                                  # rm.term not found in any moment
     }
 
     if (adjust) {
@@ -211,7 +226,7 @@ predict_score.gamlss <-
       # because newdata$y is never read afterwards (predict(fit2) uses the offset
       # columns, and the final switch uses newdata[,feat]) -- but it is wrong, and
       # will error if refdata and newdata differ in number of rows.
-      newdata$y <- refdata[[feat]]
+      # newdata$y <- refdata[[feat]] #commented out for testing
 
       # apply fit2 estimates, which are shifts to the original parameters
       shift <- predict(fit2, newdata = newdata, type = "link")

@@ -23,10 +23,10 @@
 #' @param traindata Data originally used to fit `object` (`gamlss` method only).
 #'   Only used by the predict-based path (see Details): models built from `pb()`
 #'   smooths, `random()` effects and parametric terms are scored data-free and
-#'   never need it. For a model that also contains another smoother type (`cs()`,
-#'   `s()`, `ga()`, ...) `traindata` is required; if `NULL`, `predict()` falls
-#'   back to re-evaluating the training data from the model call (only works if
-#'   it is still in scope).
+#'   never need it. For a model that also contains a gamlss smoother type not yet
+#'   reconstructed data-free (`cs()`, `ps()`, `ga()`/`s()`, ...) `traindata` is
+#'   required; if `NULL`, `predict()` falls back to re-evaluating the training
+#'   data from the model call (only works if it is still in scope).
 #'
 #' @return Vector of scores of length equal to number of rows in `newdata`
 #' @export
@@ -51,9 +51,12 @@
 #' the stored spline coefficients and interpolation functions, and the stored
 #' per-level random-effect BLUPs (unseen levels default to the population value
 #' 0). This is exact for `adjust=TRUE` (any fixed-factor baseline difference is
-#' absorbed by the adjustment model). A model with a kept non-reconstructable
-#' smoother (`cs()`, `s()`, `ga()`, ...) falls back to the predict-based path and
-#' needs `traindata`.
+#' absorbed by the adjustment model). Other \link[gamlss]{gamlss} smoother types
+#' (`cs()`, `ps()`, `ga()`/`s()`, ...) are not yet reconstructed data-free, so a
+#' model with a kept one falls back to the predict-based path and needs
+#' `traindata`. (This concerns only the \link[gamlss]{gamlss} method;
+#' \link[gamlss2]{gamlss2} fits predict their `s()`/`ga()` smooths without the
+#' original data natively, so `predict_score.gamlss2` is unaffected.)
 #' Lists of
 #' parameters can be provided as `object`. The list needs to have names `new`
 #' and/or `ref`, where parameters correspond to `newdata` and `refdata`
@@ -171,21 +174,26 @@ predict_score.gamlss2 <-
   }
 
 # ---- internal: is a gamlss fit eligible for data-free prediction? ------------
-# The data-free reconstruction below rebuilds parametric terms (coef + design),
-# pb() smooths (stored knots + coefficients) and random() effects (stored
-# per-level BLUPs), but NOT other smoother types (cs, s, ga, ...). A smoother
-# whose variables include `rm.term` is dropped anyway, so it need not be
-# reconstructable. Eligible = the model has NO kept (non-dropped) smoother that
-# is non-reconstructable; `bad` flags such a smoother. Purely parametric models
-# (no smooths) are therefore eligible.
+# The data-free reconstruction below currently rebuilds parametric terms (coef +
+# design), pb() smooths (stored knots + coefficients) and random() effects
+# (stored per-level BLUPs). Other gamlss smoother types (cs, ps, ga/s, ...) are
+# NOT YET reconstructed here -- this is an implementation gap, not a fundamental
+# one (cs/ps store knots + coefs, and ga()/s() wrap self-contained mgcv objects
+# whose predict needs no data). A smoother whose variables include `rm.term` is
+# dropped anyway, so its type does not matter. Eligible = the model has NO kept
+# (non-dropped) smoother of an unsupported type; `bad` flags such a smoother.
+# Purely parametric models (no smooths) are therefore eligible.
+# NOTE: this only concerns the `gamlss` method. gamlss2 fits already predict
+# their s()/ga() smooths without the original data, so predict_score.gamlss2 is
+# unaffected and needs no data-free reconstruction.
 .datafree_eligible_gamlss <- function(object, rm.term) {
   bad <- FALSE
   for (p in object$parameters) {
     sm <- colnames(object[[paste0(p, ".s")]])
     for (lab in sm) {
-      recon   <- grepl("^pb\\(", lab) || grepl("^random\\(", lab)
-      dropped <- !is.null(rm.term) && rm.term %in% all.vars(str2lang(lab))
-      if (!recon && !dropped) bad <- TRUE
+      supported <- grepl("^pb\\(", lab) || grepl("^random\\(", lab)
+      dropped   <- !is.null(rm.term) && rm.term %in% all.vars(str2lang(lab))
+      if (!supported && !dropped) bad <- TRUE
     }
   }
   list(bad = bad, ok = !bad)
@@ -199,8 +207,9 @@ predict_score.gamlss2 <-
 # Each kept pb() term adds its linear coefficient * x plus the stored
 # interpolation function getSmo(...)$fun(x); each kept random() effect adds the
 # stored per-level BLUP getSmo(...)$coef[level] (unseen levels -> 0, the
-# population value). Dropped and other smoother types contribute nothing. Only
-# valid when the model is data-free eligible (see .datafree_eligible_gamlss).
+# population value). Dropped smoothers contribute nothing. Only valid when the
+# model is data-free eligible (see .datafree_eligible_gamlss); eligibility
+# guarantees any kept smoother is a supported (pb/random) type.
 .lp_nodata_gamlss <- function(object, p, newdata, drop.term = NULL) {
   cf   <- coef(object, p)
   tl   <- attr(terms(object[[paste0(p, ".formula")]]), "term.labels")
@@ -320,18 +329,18 @@ predict_score.gamlss <-
       stopifnot("Not all levels of rm.term in newdata are present in refdata " = levels(newdata[[rm.term]]) %in% levels(refdata[[rm.term]]))
     }
 
-    # Data-free path is the DEFAULT whenever every kept term is reconstructable
+    # Data-free path is the DEFAULT whenever every kept term is a supported type
     # (parametric terms, pb() smooths, random() effects): rebuild predictions from
-    # stored coefficients/knots/BLUPs so no original data is needed. If the model
-    # has a kept non-reconstructable smoother, refuse to silently need data --
-    # error and tell the user to pass `traindata` for the predict path.
+    # stored coefficients/knots/BLUPs so no original data is needed. Other gamlss
+    # smoother types (cs/ps/ga/s) are not yet reconstructed here, so rather than
+    # silently need data we error and ask for `traindata` (the predict path).
     elig <- .datafree_eligible_gamlss(object, rm.term)
     use_datafree <- elig$ok
     if (elig$bad && is.null(traindata)) {
-      stop("Data-free prediction supports parametric terms, pb() smooths and ",
-           "random() effects, but this model has another kept smoother type ",
-           "(cs/s/ga/...). Supply `traindata` (the original fitting data) to use ",
-           "the predict-based path.")
+      stop("Data-free prediction currently supports parametric terms, pb() ",
+           "smooths and random() effects; this model has another kept smoother ",
+           "type (cs/ps/ga/s), which is not yet reconstructed data-free. Supply ",
+           "`traindata` (the original fitting data) to use the predict-based path.")
     }
 
     # Find rm.term in any moment and append unseen factor levels.

@@ -21,12 +21,12 @@
 #' @param which.params Parameters to adjust
 #' @param type Type of score to compute. See Details
 #' @param traindata Data originally used to fit `object` (`gamlss` method only).
-#'   Only used by the predict-based path (see Details): models built only from
-#'   `pb()` smooths and/or parametric/random terms are scored data-free and never
-#'   need it. For a model that also contains a non-`pb()` smooth (`cs()`, `s()`,
-#'   `ga()`, ...) `traindata` is required; if `NULL`, `predict()` falls back to
-#'   re-evaluating the training data from the model call (only works if it is
-#'   still in scope).
+#'   Only used by the predict-based path (see Details): models built from `pb()`
+#'   smooths, `random()` effects and parametric terms are scored data-free and
+#'   never need it. For a model that also contains another smoother type (`cs()`,
+#'   `s()`, `ga()`, ...) `traindata` is required; if `NULL`, `predict()` falls
+#'   back to re-evaluating the training data from the model call (only works if
+#'   it is still in scope).
 #'
 #' @return Vector of scores of length equal to number of rows in `newdata`
 #' @export
@@ -45,11 +45,13 @@
 #' unseen level returns `NA`.)
 #'
 #' By default a \link[gamlss]{gamlss} fit whose smooths are all \link[gamlss]{pb}
-#' is scored WITHOUT the original fitting data: the population-level offsets are
-#' rebuilt from the stored spline coefficients and interpolation functions plus
-#' the parametric coefficients. This is exact for `adjust=TRUE` (any fixed-factor
-#' baseline difference is absorbed by the adjustment model). Models containing a
-#' non-`pb()` smooth fall back to the predict-based path and need `traindata`.
+#' smooths and/or \link[gamlss]{random} effects is scored WITHOUT the original
+#' fitting data: population-level offsets are rebuilt from the stored spline
+#' coefficients and interpolation functions, the stored per-level random-effect
+#' BLUPs (unseen levels default to the population value 0), and the parametric
+#' coefficients. This is exact for `adjust=TRUE` (any fixed-factor baseline
+#' difference is absorbed by the adjustment model). Models containing another
+#' smoother type fall back to the predict-based path and need `traindata`.
 #' Lists of
 #' parameters can be provided as `object`. The list needs to have names `new`
 #' and/or `ref`, where parameters correspond to `newdata` and `refdata`
@@ -177,41 +179,44 @@ predict_score.gamlss2 <-
 # if NULL, predict.gamlss re-evaluates it from the model call (the same contract
 # the rest of the method already relies on). Returns a data.frame, one column per
 # parameter.
-# ---- internal: is a gamlss fit eligible for data-free (pb-only) prediction? --
-# The data-free reconstruction below can rebuild pb() smooths from their stored
-# knots + coefficients, but NOT other smoother types (cs, s, ga, ...). A smoother
-# whose variables include `rm.term` is dropped anyway, so it need not be
-# reconstructable. Eligible = the model has >=1 pb() smooth AND every smoother
-# that is NOT dropped is a pb(). `bad` flags a non-pb smoother that would be kept.
+# ---- internal: is a gamlss fit eligible for data-free prediction? ------------
+# The data-free reconstruction below can rebuild pb() smooths (from stored knots
+# + coefficients) and random() effects (from stored per-level BLUPs), but NOT
+# other smoother types (cs, s, ga, ...). A smoother whose variables include
+# `rm.term` is dropped anyway, so it need not be reconstructable. Eligible = the
+# model has >=1 reconstructable smoother AND every smoother that is NOT dropped
+# is reconstructable. `bad` flags a non-reconstructable smoother that would be kept.
 .datafree_eligible_gamlss <- function(object, rm.term) {
-  any_pb <- FALSE; bad <- FALSE
+  has_recon <- FALSE; bad <- FALSE
   for (p in object$parameters) {
     sm <- colnames(object[[paste0(p, ".s")]])
     for (lab in sm) {
-      is_pb   <- grepl("^pb\\(", lab)
+      recon   <- grepl("^pb\\(", lab) || grepl("^random\\(", lab)
       dropped <- !is.null(rm.term) && rm.term %in% all.vars(str2lang(lab))
-      if (is_pb) any_pb <- TRUE
-      if (!is_pb && !dropped) bad <- TRUE
+      if (recon) has_recon <- TRUE
+      if (!recon && !dropped) bad <- TRUE
     }
   }
-  list(any_pb = any_pb, bad = bad, ok = any_pb && !bad)
+  list(has_recon = has_recon, bad = bad, ok = has_recon && !bad)
 }
 
 # ---- internal: data-free link-scale linear predictor for one parameter -------
 # Rebuilds parameter `p`'s link-scale predictor on `newdata` WITHOUT the original
 # fitting data, dropping any term whose variables include `drop.term` (batch
 # removed -> population level). The parametric part is aligned to coef() BY NAME
-# (coef also carries a linear entry per smoother, so positional alignment is
-# unsafe); each pb() term then adds its linear coefficient * x plus the stored
-# interpolation function getSmo(...)$fun(x). Non-pb smoothers (e.g. random())
-# contribute nothing at the population level and are ignored. Only valid when the
-# model is data-free eligible (see .datafree_eligible_gamlss).
+# (coef also carries an entry per smoother, so positional alignment is unsafe).
+# Each kept pb() term adds its linear coefficient * x plus the stored
+# interpolation function getSmo(...)$fun(x); each kept random() effect adds the
+# stored per-level BLUP getSmo(...)$coef[level] (unseen levels -> 0, the
+# population value). Dropped and other smoother types contribute nothing. Only
+# valid when the model is data-free eligible (see .datafree_eligible_gamlss).
 .lp_nodata_gamlss <- function(object, p, newdata, drop.term = NULL) {
   cf   <- coef(object, p)
   tl   <- attr(terms(object[[paste0(p, ".formula")]]), "term.labels")
   sm   <- colnames(object[[paste0(p, ".s")]]); if (is.null(sm)) sm <- character(0)
-  pb_lab    <- sm[grepl("^pb\\(", sm)]
-  param_lab <- setdiff(tl, sm)                       # genuine parametric terms
+  pb_lab     <- sm[grepl("^pb\\(", sm)]
+  random_lab <- sm[grepl("^random\\(", sm)]
+  param_lab  <- setdiff(tl, sm)                      # genuine parametric terms
   xlev <- object[[paste0(p, ".xlevels")]]
 
   # factor covariates -> training levels; a fixed-factor drop.term -> its
@@ -238,6 +243,21 @@ predict_score.gamlss2 <-
     v  <- vars[1]
     lp <- lp + cf[[lab]] * nd[[v]] +
       gamlss::getSmo(object, p, which = match(lab, sm))$fun(nd[[v]])
+  }
+
+  # random() effects: add the stored per-level BLUP (unseen levels -> population 0)
+  for (lab in random_lab) {
+    vars <- all.vars(str2lang(lab))
+    if (!is.null(drop.term) && drop.term %in% vars) next   # dropped batch random effect
+    v    <- vars[1]
+    blup <- gamlss::getSmo(object, p, which = match(lab, sm))$coef
+    b    <- as.numeric(blup[as.character(nd[[v]])])
+    if (anyNA(b)) {
+      warning("random(", v, "): ", sum(is.na(b)),
+              " level(s) not seen in the fit; their effect is set to 0 (population).")
+      b[is.na(b)] <- 0
+    }
+    lp <- lp + b
   }
   lp
 }
@@ -308,15 +328,16 @@ predict_score.gamlss <-
       stopifnot("Not all levels of rm.term in newdata are present in refdata " = levels(newdata[[rm.term]]) %in% levels(refdata[[rm.term]]))
     }
 
-    # Data-free path is the DEFAULT for models with pb(): rebuild predictions from
-    # stored knots + coefficients so no original data is needed. If a pb model also
-    # has a non-pb smoother that can't be reconstructed, refuse to silently need
-    # data -- error and tell the user to pass `traindata` for the predict path.
+    # Data-free path is the DEFAULT for models built from pb() smooths and/or
+    # random() effects: rebuild predictions from stored knots/coefficients/BLUPs so
+    # no original data is needed. If such a model also has a non-reconstructable
+    # smoother, refuse to silently need data -- error and tell the user to pass
+    # `traindata` for the predict path.
     elig <- .datafree_eligible_gamlss(object, rm.term)
     use_datafree <- elig$ok
-    if (elig$any_pb && elig$bad && is.null(traindata)) {
-      stop("Data-free prediction needs every non-`rm.term` smoother to be pb(), ",
-           "but this model has another smoother type (e.g. cs/s/ga). Supply ",
+    if (elig$has_recon && elig$bad && is.null(traindata)) {
+      stop("Data-free prediction supports pb() smooths and random() effects, but ",
+           "this model also has another smoother type (cs/s/ga/...). Supply ",
            "`traindata` (the original fitting data) to use the predict-based path.")
     }
 

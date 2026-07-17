@@ -127,6 +127,7 @@ predict_score.gamlss2 <-
     if (!is.null(rm.term)) {
       oldlevels <- object$xlevels[[rm.term]]
       newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
+      stopifnot("Cannot compute rm.term effects for more than 1 unseen batch level" = length(newlevels)<=1)
       object$xlevels[[rm.term]] <- c(oldlevels, newlevels)
     }
 
@@ -174,29 +175,21 @@ predict_score.gamlss2 <-
   }
 
 # ---- internal: is a gamlss fit eligible for data-free prediction? ------------
-# The data-free reconstruction below currently rebuilds parametric terms (coef +
-# design), pb() smooths (stored knots + coefficients) and random() effects
-# (stored per-level BLUPs). Other gamlss smoother types (cs, ps, ga/s, ...) are
-# NOT YET reconstructed here -- this is an implementation gap, not a fundamental
-# one (cs/ps store knots + coefs, and ga()/s() wrap self-contained mgcv objects
-# whose predict needs no data). A smoother whose variables include `rm.term` is
-# dropped anyway, so its type does not matter. Eligible = the model has NO kept
-# (non-dropped) smoother of an unsupported type; `bad` flags such a smoother.
-# Purely parametric models (no smooths) are therefore eligible.
-# NOTE: this only concerns the `gamlss` method. gamlss2 fits already predict
-# their s()/ga() smooths without the original data, so predict_score.gamlss2 is
-# unaffected and needs no data-free reconstruction.
+# rebuilds parametric terms (coef + design), pb() smooths (stored knots + coefficients) 
+# and random() effects (stored per-level BLUPs). Other gamlss smoother types (
+# cs, ps, ga/s, ...) are not currently implemented. TRUE = the model has NO kept
+# (non-dropped) smoother of an unsupported type
 .datafree_eligible_gamlss <- function(object, rm.term) {
-  bad <- FALSE
+  ok <- TRUE
   for (p in object$parameters) {
     sm <- colnames(object[[paste0(p, ".s")]])
     for (lab in sm) {
       supported <- grepl("^pb\\(", lab) || grepl("^random\\(", lab)
       dropped   <- !is.null(rm.term) && rm.term %in% all.vars(str2lang(lab))
-      if (!supported && !dropped) bad <- TRUE
+      if (!supported && !dropped) ok <- FALSE
     }
   }
-  list(bad = bad, ok = !bad)
+  ok
 }
 
 # ---- internal: data-free link-scale linear predictor for one parameter -------
@@ -207,9 +200,8 @@ predict_score.gamlss2 <-
 # Each kept pb() term adds its linear coefficient * x plus the stored
 # interpolation function getSmo(...)$fun(x); each kept random() effect adds the
 # stored per-level BLUP getSmo(...)$coef[level] (unseen levels -> 0, the
-# population value). Dropped smoothers contribute nothing. Only valid when the
-# model is data-free eligible (see .datafree_eligible_gamlss); eligibility
-# guarantees any kept smoother is a supported (pb/random) type.
+# population value). Only valid when model is data-free eligible (see 
+# .datafree_eligible_gamlss())
 .lp_nodata_gamlss <- function(object, p, newdata, drop.term = NULL) {
   cf   <- coef(object, p)
   tl   <- attr(terms(object[[paste0(p, ".formula")]]), "term.labels")
@@ -219,20 +211,27 @@ predict_score.gamlss2 <-
   param_lab  <- setdiff(tl, sm)                      # genuine parametric terms
   xlev <- object[[paste0(p, ".xlevels")]]
 
-  # factor covariates -> training levels; a fixed-factor drop.term -> its
-  # reference level, so its (treatment-coded) contribution is exactly zero.
-  nd <- newdata
+  # factor covariates -> training levels
   for (fv in names(xlev)) {
     if (!is.null(drop.term) && fv == drop.term) {
-      nd[[fv]] <- factor(xlev[[fv]][1], levels = xlev[[fv]])
-    } else if (fv %in% names(nd)) {
-      nd[[fv]] <- factor(nd[[fv]], levels = xlev[[fv]])
+      # drop.term -> reference level. Preserve orderedness (xlevels does not record
+      # it): building from a bare string would give an UNORDERED factor, so an
+      # ordered drop.term would get treatment- instead of polynomial-contrast
+      # columns, whose names miss coef() and turn the predictor into NA. With the
+      # right class the contribution is a constant (0 if unordered) that cancels
+      # under adjust = TRUE.
+      newdata[[fv]] <- factor(xlev[[fv]][1], levels = xlev[[fv]],
+                              ordered = is.ordered(newdata[[fv]]))
+    } else if (fv %in% names(newdata)) {
+      # align levels with training data (factor() keeps an already-ordered class)
+      newdata[[fv]] <- factor(newdata[[fv]], levels = xlev[[fv]],
+                              ordered = is.ordered(newdata[[fv]]))
     }
   }
 
   # parametric part (intercept + genuine parametric terms), aligned by name
   pfo <- if (length(param_lab)) stats::reformulate(param_lab) else ~1
-  mf  <- stats::model.frame(pfo, nd, na.action = stats::na.pass)
+  mf  <- stats::model.frame(pfo, newdata, na.action = stats::na.pass)
   Xp  <- stats::model.matrix(pfo, mf)
   lp  <- as.numeric(Xp %*% cf[colnames(Xp)])
 
@@ -241,8 +240,8 @@ predict_score.gamlss2 <-
     vars <- all.vars(str2lang(lab))
     if (!is.null(drop.term) && drop.term %in% vars) next   # pb on the batch var -> dropped
     v  <- vars[1]
-    lp <- lp + cf[[lab]] * nd[[v]] +
-      gamlss::getSmo(object, p, which = match(lab, sm))$fun(nd[[v]])
+    lp <- lp + cf[[lab]] * newdata[[v]] +
+      gamlss::getSmo(object, p, which = match(lab, sm))$fun(newdata[[v]])
   }
 
   # random() effects: add the stored per-level BLUP (unseen levels -> population 0)
@@ -251,7 +250,7 @@ predict_score.gamlss2 <-
     if (!is.null(drop.term) && drop.term %in% vars) next   # dropped batch random effect
     v    <- vars[1]
     blup <- gamlss::getSmo(object, p, which = match(lab, sm))$coef
-    b    <- as.numeric(blup[as.character(nd[[v]])])
+    b    <- as.numeric(blup[as.character(newdata[[v]])])
     if (anyNA(b)) {
       warning("random(", v, "): ", sum(is.na(b)),
               " level(s) not seen in the fit; their effect is set to 0 (population).")
@@ -330,17 +329,14 @@ predict_score.gamlss <-
     }
 
     # Data-free path is the DEFAULT whenever every kept term is a supported type
-    # (parametric terms, pb() smooths, random() effects): rebuild predictions from
-    # stored coefficients/knots/BLUPs so no original data is needed. Other gamlss
-    # smoother types (cs/ps/ga/s) are not yet reconstructed here, so rather than
-    # silently need data we error and ask for `traindata` (the predict path).
-    elig <- .datafree_eligible_gamlss(object, rm.term)
-    use_datafree <- elig$ok
-    if (elig$bad && is.null(traindata)) {
-      stop("Data-free prediction currently supports parametric terms, pb() ",
-           "smooths and random() effects; this model has another kept smoother ",
-           "type (cs/ps/ga/s), which is not yet reconstructed data-free. Supply ",
-           "`traindata` (the original fitting data) to use the predict-based path.")
+    # (parametric terms, pb() smooths, random() effects). Otherwise (a kept
+    # cs/ps/ga/s smooth) we can't reconstruct without data: rather than silently
+    # rely on the training frame being in scope, require `traindata`.
+    use_datafree <- .datafree_eligible_gamlss(object, rm.term)
+    if (!use_datafree && is.null(traindata)) {
+      stop("this model has a kept smoother type (cs/ps/ga/s) that is not yet ",
+           "reconstructed data-free. Supply `traindata` (the original fitting ",
+           "data) to use the predict-based path.")
     }
 
     # Find rm.term in any moment and append unseen factor levels.

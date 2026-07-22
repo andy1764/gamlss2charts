@@ -10,6 +10,12 @@ License: MIT License
 Encoding: UTF-8
 LazyData: true
 Depends: gamlss2
-Suggests: gamlss
-RoxygenNote: 7.3.2
+Suggests:
+    gamlss,
+    gamlss.dist,
+    gamlssTools,
+    testthat (>= 3.0.0)
+Remotes: BGDlab/gamlssTools
+Config/testthat/edition: 3
+RoxygenNote: 7.3.3
 Roxygen: list(markdown = TRUE)

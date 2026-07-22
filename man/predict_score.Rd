@@ -28,7 +28,8 @@ predict_score(object, ...)
   adjust = TRUE,
   rm.term = NULL,
   newformula = y ~ offset(mu) | offset(sigma),
-  which.params = c("mu", "sigma")
+  which.params = c("mu", "sigma"),
+  traindata = NULL
 )
 
 \method{predict_score}{list}(
@@ -67,6 +68,14 @@ mu values from \code{object} fit, y ~ offset(mu) | offset(sigma) uses fitted
 mu and sigma values from \code{object}. See Details}
 
 \item{which.params}{Parameters to adjust}
+
+\item{traindata}{Data originally used to fit \code{object} (\code{gamlss} method only).
+Only used by the predict-based path (see Details): models built from \code{pb()}
+smooths, \code{random()} effects and parametric terms are scored data-free and
+never need it. For a model that also contains a gamlss smoother type not yet
+reconstructed data-free (\code{cs()}, \code{ps()}, \code{ga()}/\code{s()}, ...) \code{traindata} is
+required; if \code{NULL}, \code{predict()} falls back to re-evaluating the training
+data from the model call (only works if it is still in scope).}
 }
 \value{
 Vector of scores of length equal to number of rows in \code{newdata}
@@ -83,9 +92,30 @@ When \code{adjust=TRUE}, fixes the predictions from \code{object} as offsets for
 adjustment model. These offsets need to be specified in \code{newformula}. Then,
 the adjustment model is fit, adjustment parameters are combined with the
 offsets for \code{which.params}, and scores are computed. See references for more
-details. \link[gamlss]{gamlss} support is still limited to fixed effects,
-but workarounds are available for \link[gamlss]{random} effects. Lists of
-parameters can be provided as \code{object}. The list needs to have names \code{new}
+details. For \link[gamlss]{gamlss} fits with \code{adjust=TRUE}, the batch term
+\code{rm.term} may be a fixed factor, a smooth, or a \link[gamlss]{random} effect:
+offsets set \code{rm.term} to its baseline (the population mean for a centered
+random effect, the reference level for a fixed factor) and its site-specific
+shift is re-estimated by the adjustment model. Because the adjustment model's
+intercept absorbs any constant baseline difference, the choice of baseline does
+not affect \code{adjust=TRUE} scores. (With \code{adjust=FALSE}, random effects are not
+supported, since predicting an unseen level returns \code{NA}.)
+
+By default a \link[gamlss]{gamlss} fit built from parametric terms,
+\link[gamlss]{pb} smooths and/or \link[gamlss]{random} effects (including
+purely parametric fits with no smooths) is scored WITHOUT the original fitting
+data: batch-baseline offsets are rebuilt from the parametric coefficients,
+the stored spline coefficients and interpolation functions, and the stored
+per-level random-effect BLUPs (levels unseen in the fit default to the
+population value 0). This is exact for \code{adjust=TRUE} (any fixed-factor baseline
+difference is absorbed by the adjustment model). Other \link[gamlss]{gamlss} smoother types
+(\code{cs()}, \code{ps()}, \code{ga()}/\code{s()}, ...) are not yet reconstructed data-free, so a
+model with a kept one falls back to the predict-based path and needs
+\code{traindata}. (This concerns only the \link[gamlss]{gamlss} method;
+\link[gamlss2]{gamlss2} fits predict their \code{s()}/\code{ga()} smooths without the
+original data natively, so \code{predict_score.gamlss2} is unaffected.)
+
+Lists of parameters can be provided as \code{object}. The list needs to have names \code{new}
 and/or \code{ref}, where parameters correspond to \code{newdata} and \code{refdata}
 respectively. \code{feat} and \code{family} need to be specified, and should match with
 the \code{newdata} and distribution used to fit the original parameters.
@@ -105,6 +135,7 @@ predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()
 # example for gamlss
 if (require("gamlss")) {
   train <- iris[1:100,]
+  train$Species <- droplevels(train$Species)
   ft <- gamlss(Sepal.Length ~ Sepal.Width + Species, ~ Species,
     family = BCCG(), data = train)
   predict_score(ft, iris[-(1:100),], rm.term = "Species") |> hist()

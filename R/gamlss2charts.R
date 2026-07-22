@@ -21,9 +21,12 @@
 #' @param which.params Parameters to adjust
 #' @param type Type of score to compute. See Details
 #' @param traindata Data originally used to fit `object` (`gamlss` method only).
-#'   Optional: if `NULL`, `predict()` re-evaluates the training data from the
-#'   model call (works when it is still in scope). Passing it explicitly is more
-#'   robust, especially for models with smooths or random effects.
+#'   Only used by the predict-based path (see Details): models built from `pb()`
+#'   smooths, `random()` effects and parametric terms are scored data-free and
+#'   never need it. For a model that also contains a gamlss smoother type not yet
+#'   reconstructed data-free (`cs()`, `ps()`, `ga()`/`s()`, ...) `traindata` is
+#'   required; if `NULL`, `predict()` falls back to re-evaluating the training
+#'   data from the model call (only works if it is still in scope).
 #'
 #' @return Vector of scores of length equal to number of rows in `newdata`
 #' @export
@@ -36,11 +39,28 @@
 #' offsets for `which.params`, and scores are computed. See references for more
 #' details. For \link[gamlss]{gamlss} fits with `adjust=TRUE`, the batch term
 #' `rm.term` may be a fixed factor, a smooth, or a \link[gamlss]{random} effect:
-#' offsets are taken as population-level (`type="terms"`) predictions with the
-#' `rm.term` contribution removed, and its site-specific shift is re-estimated by
-#' the adjustment model. (With `adjust=FALSE`, random effects are not supported,
-#' since predicting an unseen level returns `NA`.) Lists of
-#' parameters can be provided as `object`. The list needs to have names `new`
+#' offsets set `rm.term` to its baseline (the population mean for a centered
+#' random effect, the reference level for a fixed factor) and its site-specific
+#' shift is re-estimated by the adjustment model. Because the adjustment model's
+#' intercept absorbs any constant baseline difference, the choice of baseline does
+#' not affect `adjust=TRUE` scores. (With `adjust=FALSE`, random effects are not
+#' supported, since predicting an unseen level returns `NA`.)
+#'
+#' By default a \link[gamlss]{gamlss} fit built from parametric terms,
+#' \link[gamlss]{pb} smooths and/or \link[gamlss]{random} effects (including
+#' purely parametric fits with no smooths) is scored WITHOUT the original fitting
+#' data: batch-baseline offsets are rebuilt from the parametric coefficients,
+#' the stored spline coefficients and interpolation functions, and the stored
+#' per-level random-effect BLUPs (levels unseen in the fit default to the
+#' population value 0). This is exact for `adjust=TRUE` (any fixed-factor baseline
+#' difference is absorbed by the adjustment model). Other \link[gamlss]{gamlss} smoother types
+#' (`cs()`, `ps()`, `ga()`/`s()`, ...) are not yet reconstructed data-free, so a
+#' model with a kept one falls back to the predict-based path and needs
+#' `traindata`. (This concerns only the \link[gamlss]{gamlss} method;
+#' \link[gamlss2]{gamlss2} fits predict their `s()`/`ga()` smooths without the
+#' original data natively, so `predict_score.gamlss2` is unaffected.)
+#' 
+#' Lists of parameters can be provided as `object`. The list needs to have names `new`
 #' and/or `ref`, where parameters correspond to `newdata` and `refdata`
 #' respectively. `feat` and `family` need to be specified, and should match with
 #' the `newdata` and distribution used to fit the original parameters.
@@ -85,6 +105,14 @@ predict_score.gamlss2 <-
            which.params = c("mu", "sigma")) {
     type = match.arg(type)
 
+    if (!is.null(rm.term) && !adjust) {
+      warning("`rm.term` is set with `adjust = FALSE`: the '", rm.term, "' effect ",
+              "is removed but not re-estimated/batch-adjusted for the new data. For a random ",
+              "effect this sets it to the population mean (0); for a fixed factor ",
+              "it sets it to the reference level. Use `adjust = TRUE` to estimate ",
+              "and apply a batch adjustment.")
+    }
+
     if(object$family$family != "NO" & type == "zscore") {
       warning("Z-scores may not be valid for families other than NO")
     }
@@ -109,19 +137,15 @@ predict_score.gamlss2 <-
     if (!is.null(rm.term)) {
       oldlevels <- object$xlevels[[rm.term]]
       newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
+      stopifnot("Cannot compute rm.term effects for more than 1 unseen batch level" = length(newlevels)<=1)
       object$xlevels[[rm.term]] <- c(oldlevels, newlevels)
     }
 
     if (adjust) {
       refdata$y <- refdata[[feat]]  # `newformula`'s LHS is `y`, so copy the response into `y`
-      # get offsets for refdata and fit adjustment model
-      # Original model's link-scale predictions on refdata (rm.term excluded).
-      # These are the frozen offsets fed to the adjustment model.
+      # get offsets for refdata and fit adjustment model.
       pred2 <- predict(object, newdata = refdata, type = "link", terms = mterms)
       refdata <- cbind(refdata, pred2)  # add mu/sigma... columns for the offset() terms
-      # Fit the adjustment model. Because the formula is all offsets, fit2 only
-      # estimates the residual shift (typically a per-parameter intercept) on top
-      # of the frozen offsets -- i.e. how this reference sample deviates from `object`.
       fit2 <- gamlss2::gamlss2(newformula, data = refdata, family = object$family)
 
       # get offsets for newdata
@@ -155,28 +179,111 @@ predict_score.gamlss2 <-
     )
   }
 
-# ---- internal helper: population-level offsets for the gamlss method ---------
-# Returns link-scale predictions for each `params` element with the batch term
-# `rm.term` removed (i.e. set to its population level). It uses type = "terms"
-# and drops the rm.term column, which works uniformly for fixed factors, smooths
-# (pb(), s()) and random effects (random(site)) -- the last of which predictAll()
-# cannot handle, returning NA at an unseen level. When `rm.term` is not part of a
-# given parameter's formula, the full type = "link" prediction is returned.
-# `traindata`, if supplied, is passed to predict() as the original fitting data;
-# if NULL, predict.gamlss re-evaluates it from the model call (the same contract
-# the rest of the method already relies on). Returns a data.frame, one column per
-# parameter.
-.pop_offset_gamlss <- function(object, scoredata, rm.term, params, traindata = NULL) {
+# ---- internal: is a gamlss fit eligible for data-free prediction? ------------
+# rebuilds parametric terms (coef + design), pb() smooths (stored knots + coefficients) 
+# and random() effects (stored per-level BLUPs). Other gamlss smoother types (
+# cs, ps, ga/s, ...) are not currently implemented. TRUE = the model has NO kept
+# (non-dropped) smoother of an unsupported type
+.datafree_eligible_gamlss <- function(object, rm.term) {
+  ok <- TRUE
+  for (p in object$parameters) {
+    sm <- colnames(object[[paste0(p, ".s")]])
+    for (lab in sm) {
+      supported <- grepl("^pb\\(", lab) || grepl("^random\\(", lab)
+      dropped   <- !is.null(rm.term) && rm.term %in% all.vars(str2lang(lab))
+      if (!supported && !dropped) ok <- FALSE
+    }
+  }
+  ok
+}
+
+# ---- internal: data-free link-scale linear predictor for one parameter -------
+# Rebuilds parameter `p`'s link-scale predictor on `newdata` WITHOUT the original
+# fitting data, dropping `drop.term`. The parametric part is aligned to coef() BY NAME
+# (coef also carries an entry per smoother, so positional alignment is unsafe).
+# Each kept pb() term adds its linear coefficient * x plus the stored
+# interpolation function getSmo(...)$fun(x); each kept random() effect adds the
+# stored per-level BLUP getSmo(...)$coef[level] (unseen levels -> 0, the
+# population value). Only valid when model is data-free eligible (see 
+# .datafree_eligible_gamlss())
+.lp_nodata_gamlss <- function(object, p, newdata, drop.term = NULL) {
+  cf   <- coef(object, p)
+  tl   <- attr(terms(object[[paste0(p, ".formula")]]), "term.labels")
+  sm   <- colnames(object[[paste0(p, ".s")]]); if (is.null(sm)) sm <- character(0)
+  pb_lab     <- sm[grepl("^pb\\(", sm)]
+  random_lab <- sm[grepl("^random\\(", sm)]
+  param_lab  <- setdiff(tl, sm)                      # genuine parametric terms
+  xlev <- object[[paste0(p, ".xlevels")]]
+
+  # factor covariates -> training levels
+  for (fv in names(xlev)) {
+    if (!is.null(drop.term) && fv == drop.term) {
+      # drop.term -> constant
+      newdata[[fv]] <- factor(xlev[[fv]][1], levels = xlev[[fv]],
+                              ordered = is.ordered(newdata[[fv]]))
+    } else if (fv %in% names(newdata)) {
+      # align levels with training data (factor() keeps an already-ordered class)
+      newdata[[fv]] <- factor(newdata[[fv]], levels = xlev[[fv]],
+                              ordered = is.ordered(newdata[[fv]]))
+    }
+  }
+
+  # parametric part (intercept + genuine parametric terms), aligned by name
+  pfo <- if (length(param_lab)) stats::reformulate(param_lab) else ~1
+  mf  <- stats::model.frame(pfo, newdata, na.action = stats::na.pass)
+  Xp  <- stats::model.matrix(pfo, mf)
+  lp  <- as.numeric(Xp %*% cf[colnames(Xp)])
+
+  # pb() smooths: linear part (coef * x) + stored nonlinear interpolation
+  for (lab in pb_lab) {
+    vars <- all.vars(str2lang(lab))
+    if (!is.null(drop.term) && drop.term %in% vars) next   # pb on the batch var -> dropped
+    v  <- vars[1]
+    lp <- lp + cf[[lab]] * newdata[[v]] +
+      gamlss::getSmo(object, p, which = match(lab, sm))$fun(newdata[[v]])
+  }
+
+  # random() effects: add the stored per-level BLUP (unseen levels -> population 0)
+  for (lab in random_lab) {
+    vars <- all.vars(str2lang(lab))
+    if (!is.null(drop.term) && drop.term %in% vars) next   # dropped batch random effect
+    v    <- vars[1]
+    blup <- gamlss::getSmo(object, p, which = match(lab, sm))$coef
+    b    <- as.numeric(blup[as.character(newdata[[v]])])
+    if (anyNA(b)) {
+      warning("random(", v, "): ", sum(is.na(b)),
+              " level(s) not seen in the fit; their effect is set to 0 (population).")
+      b[is.na(b)] <- 0
+    }
+    lp <- lp + b
+  }
+  lp
+}
+
+# ---- internal: batch-baseline offsets for the gamlss method ------------------
+# Per-parameter link-scale predictions with the batch term set to its baseline
+# (population mean 0 for a random effect, reference level for a fixed factor). When
+# `datafree = TRUE` (default whenever every kept smoother is pb()/random(),
+# including purely parametric models) the reconstruction uses stored coefficients
+# + pb interpolation + random BLUPs and needs no original data; otherwise it goes
+# through predict.gamlss (type = "terms"/"link"), which requires the training
+# data in scope or via `traindata`.
+.pop_offset_gamlss <- function(object, scoredata, rm.term, params,
+                               traindata = NULL, datafree = FALSE) {
   # Keep only the variables the model actually uses
   model_vars <- unique(unlist(lapply(params, function(p)
     all.vars(object[[paste0(p, ".formula")]]))))
   scoredata <- scoredata[, intersect(model_vars, names(scoredata)), drop = FALSE]
 
+  #loop over moments
   out <- lapply(params, function(p) {
+    #if non training data required, use alternate function
+    if (datafree) return(.lp_nodata_gamlss(object, p, scoredata, drop.term = rm.term))
     fo <- object[[paste0(p, ".formula")]]
     drop_term <- !is.null(rm.term) && !is.null(fo) && rm.term %in% all.vars(fo)
-    #eval if rm.term is present in this moment
+    #eval if rm.term is present
     if (drop_term) {
+      #use training data to predict without rm.term
       args <- list(object, what = p, newdata = scoredata, type = "terms")
       if (!is.null(traindata)) args$data <- traindata
       tm <- do.call(predict, args)
@@ -189,6 +296,7 @@ predict_score.gamlss2 <-
       }, logical(1))
       ic + rowSums(tm[, !drop, drop = FALSE])
     } else {
+      #use training data to predict
       args <- list(object, what = p, newdata = scoredata, type = "link")
       if (!is.null(traindata)) args$data <- traindata
       as.numeric(do.call(predict, args))
@@ -207,6 +315,14 @@ predict_score.gamlss <-
            which.params = c("mu", "sigma"), traindata = NULL) {
     type = match.arg(type)
 
+    if (!is.null(rm.term) && !adjust) {
+      warning("`rm.term` is set with `adjust = FALSE`: the '", rm.term, "' effect ",
+              "is removed but not re-estimated/batch-adjusted. For a random ",
+              "effect this sets it to the population mean (0); for a fixed factor ",
+              "it sets it to the reference level. Use `adjust = TRUE` to estimate ",
+              "and apply a batch adjustment.")
+    }
+
     if(object$family[1] != "NO" & type == "zscore") {
       warning("Z-scores may not be valid for families other than NO")
     }
@@ -224,12 +340,40 @@ predict_score.gamlss <-
       stopifnot("Not all levels of rm.term in newdata are present in refdata " = levels(newdata[[rm.term]]) %in% levels(refdata[[rm.term]]))
     }
 
-    # Find rm.term in any moment and append unseen factor levels
-    # A random effect (random(site)) never appears in *.xlevels, so the
-    # loop simply matches nothing and we proceed (it is dropped later as an NA
-    # column); hence there is deliberately no error when `updated` stays FALSE.
-    if (!is.null(rm.term)) {
-      for (p in object$parameters) {                      
+    # Informative error for unseen levels of a NON-rm.term factor
+    known_levels <- list()
+    for (p in object$parameters) {
+      xl <- object[[paste0(p, ".xlevels")]]
+      for (fv in setdiff(names(xl), rm.term))
+        known_levels[[fv]] <- union(known_levels[[fv]], xl[[fv]])
+    }
+    for (fv in names(known_levels)) {
+      for (nm in c("newdata", "refdata")) {
+        d <- if (nm == "newdata") newdata else refdata
+        if (fv %in% names(d)) {
+          unseen <- setdiff(na.omit(as.character(unique(d[[fv]]))), known_levels[[fv]])
+          if (length(unseen))
+            stop("factor `", fv, "` in ", nm, " has new level", paste(unseen, collapse = ", "), 
+                 ". Only `rm.term` may introduce unseen levels.")
+        }
+      }
+    }
+
+    use_datafree <- .datafree_eligible_gamlss(object, rm.term)
+    if (!use_datafree && is.null(traindata)) {
+      stop("this model has a kept smoother type (cs/ps/ga/s) that is not yet ",
+           "reconstructed data-free. Supply `traindata` (the original fitting ",
+           "data) to use the predict-based path.")
+    }
+
+    # Find rm.term in any moment and append unseen factor levels.
+    # Not needed for the data-free path (it sets a fixed-factor rm.term to its
+    # reference level directly), and appending levels there would misalign the
+    # design with coef(); so only run this for the predict-based path.
+    # A random effect (random(site)) never appears in *.xlevels, so the loop
+    # simply matches nothing and we proceed.
+    if (!is.null(rm.term) && !use_datafree) {
+      for (p in object$parameters) {
         slot <- paste0(p, ".xlevels")
         if (rm.term %in% names(object[[slot]])) {
           oldlevels <- object[[slot]][[rm.term]]
@@ -242,13 +386,15 @@ predict_score.gamlss <-
 
     if (adjust) {
       # get offsets for refdata and fit adjustment model
-      off_ref <- .pop_offset_gamlss(object, refdata, rm.term, object$parameters, traindata)
+      off_ref <- .pop_offset_gamlss(object, refdata, rm.term, object$parameters,
+                                    traindata, datafree = use_datafree)
       refdata <- cbind(refdata, off_ref)   # add mu/sigma... columns for the offsets
       refdata$y <- refdata[[feat]]         # `newformula` LHS is `y`
       fit2 <- gamlss2::gamlss2(newformula, data = refdata, family = object$family[1])
 
       # get offsets for newdata (same computation on the observations to score)
-      off_new <- .pop_offset_gamlss(object, newdata, rm.term, object$parameters, traindata)
+      off_new <- .pop_offset_gamlss(object, newdata, rm.term, object$parameters,
+                                    traindata, datafree = use_datafree)
       newdata <- cbind(newdata, off_new)
 
       # apply fit2 estimates, which are shifts to the original parameters
@@ -257,10 +403,15 @@ predict_score.gamlss <-
       # off_new is a data.frame of the offset columns, added elementwise to shift.
       params <- family(fit2)$map2par(off_new + shift)
     } else {
-      # No adjustment. predictAll(type="link") returns link-scale values, so invert
-      # each parameter's link by hand using the stored mu.link/sigma.link/... .
-      links <- predictAll(object, newdata = newdata, type = "link", terms = mterms)[which.params]
-      params <- lapply(setNames(nm = c("mu", "sigma", "nu", "tau")[which.params]), function(x) {
+      pnames <- c("mu", "sigma", "nu", "tau")[which.params]
+      if (use_datafree) {
+        links <- setNames(lapply(pnames, function(pp)
+          .lp_nodata_gamlss(object, pp, newdata, drop.term = rm.term)), pnames)
+      } else {
+        links <- predictAll(object, newdata = newdata, type = "link", terms = mterms)[which.params]
+        names(links) <- pnames
+      }
+      params <- lapply(setNames(nm = pnames), function(x) {
         link <- object[[paste0(x, ".link")]]
         switch(
           link,

@@ -99,7 +99,9 @@ random effect, the reference level for a fixed factor) and its site-specific
 shift is re-estimated by the adjustment model. Because the adjustment model's
 intercept absorbs any constant baseline difference, the choice of baseline does
 not affect \code{adjust=TRUE} scores. (With \code{adjust=FALSE}, random effects are not
-supported, since predicting an unseen level returns \code{NA}.)
+supported, since predicting an unseen level returns \code{NA}.) If passing data with
+levels already included in the training data, \code{rm.term} and \code{adjust} will
+throw out the model's fitted batch estimate and recompute the offset.
 
 By default a \link[gamlss]{gamlss} fit built from parametric terms,
 \link[gamlss]{pb} smooths and/or \link[gamlss]{random} effects (including

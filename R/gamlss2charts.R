@@ -44,7 +44,10 @@
 #' shift is re-estimated by the adjustment model. Because the adjustment model's
 #' intercept absorbs any constant baseline difference, the choice of baseline does
 #' not affect `adjust=TRUE` scores. (With `adjust=FALSE`, random effects are not
-#' supported, since predicting an unseen level returns `NA`.)
+#' supported, since predicting an unseen level returns `NA`.) If passing data with
+#' levels already included in the training data, `rm.term` and `adjust` will
+#' throw out the model's fitted batch estimate and recompute the offset.
+#' 
 #'
 #' By default a \link[gamlss]{gamlss} fit built from parametric terms,
 #' \link[gamlss]{pb} smooths and/or \link[gamlss]{random} effects (including
@@ -137,11 +140,23 @@ predict_score.gamlss2 <-
     if (!is.null(rm.term)) {
       oldlevels <- object$xlevels[[rm.term]]
       newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
-      stopifnot("Cannot compute rm.term effects for more than 1 unseen batch level" = length(newlevels)<=1)
       object$xlevels[[rm.term]] <- c(oldlevels, newlevels)
     }
 
     if (adjust) {
+      # The adjustment model estimates ONE batch shift for all of `refdata`, so
+      # `rm.term` must be a single batch level shared by newdata and refdata --
+      # multiple levels would be silently pooled into one (averaged) adjustment.
+      if (!is.null(rm.term)) {
+        new_lv <- unique(as.character(newdata[[rm.term]]))
+        ref_lv <- unique(as.character(refdata[[rm.term]]))
+        if (length(new_lv) != 1L || length(ref_lv) != 1L || !identical(new_lv, ref_lv))
+          stop("with adjust = TRUE, `rm.term` ('", rm.term, "') must be a single ",
+               "batch level shared by newdata and refdata (the adjustment estimates ",
+               "one shift for that batch). newdata level(s): ",
+               paste(new_lv, collapse = ", "), "; refdata level(s): ",
+               paste(ref_lv, collapse = ", "), ".")
+      }
       refdata$y <- refdata[[feat]]  # `newformula`'s LHS is `y`, so copy the response into `y`
       # get offsets for refdata and fit adjustment model.
       pred2 <- predict(object, newdata = refdata, type = "link", terms = mterms)
@@ -378,13 +393,25 @@ predict_score.gamlss <-
         if (rm.term %in% names(object[[slot]])) {
           oldlevels <- object[[slot]][[rm.term]]
           newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
-          stopifnot("Cannot compute rm.term effects for more than 1 unseen batch level" = length(newlevels)<=1)
           object[[slot]][[rm.term]] <- c(oldlevels, newlevels)
         }
       }
     }
 
     if (adjust) {
+      # The adjustment model estimates ONE batch shift for all of `refdata`, so
+      # `rm.term` must be a single batch level shared by newdata and refdata --
+      # multiple levels would be silently pooled into one (averaged) adjustment.
+      if (!is.null(rm.term)) {
+        new_lv <- unique(as.character(newdata[[rm.term]]))
+        ref_lv <- unique(as.character(refdata[[rm.term]]))
+        if (length(new_lv) != 1L || length(ref_lv) != 1L || !identical(new_lv, ref_lv))
+          stop("with adjust = TRUE, `rm.term` ('", rm.term, "') must be a single ",
+               "batch level shared by newdata and refdata (the adjustment estimates ",
+               "one shift for that batch). newdata level(s): ",
+               paste(new_lv, collapse = ", "), "; refdata level(s): ",
+               paste(ref_lv, collapse = ", "), ".")
+      }
       # get offsets for refdata and fit adjustment model
       off_ref <- .pop_offset_gamlss(object, refdata, rm.term, object$parameters,
                                     traindata, datafree = use_datafree)

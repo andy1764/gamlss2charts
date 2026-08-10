@@ -10,6 +10,9 @@ License: MIT License
 Encoding: UTF-8
 LazyData: true
 Depends: gamlss2
+Imports:
+    Formula,
+    stats
 Suggests:
     gamlss,
     gamlss.dist,

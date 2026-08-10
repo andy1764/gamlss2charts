@@ -16,8 +16,8 @@ predict_score(object, ...)
   type = c("cent", "resid", "zscore", "quantile", "parameter"),
   adjust = TRUE,
   rm.term = NULL,
-  newformula = y ~ offset(mu) | offset(sigma),
-  which.params = c("mu", "sigma")
+  newformula = NULL,
+  which.params = NULL
 )
 
 \method{predict_score}{gamlss}(
@@ -27,8 +27,8 @@ predict_score(object, ...)
   type = c("cent", "resid", "zscore", "quantile", "parameter"),
   adjust = TRUE,
   rm.term = NULL,
-  newformula = y ~ offset(mu) | offset(sigma),
-  which.params = c("mu", "sigma"),
+  newformula = NULL,
+  which.params = NULL,
   traindata = NULL
 )
 
@@ -65,9 +65,17 @@ usually a batch variable (e.g. setting random effects to zero)}
 \item{newformula}{If \code{adjust=TRUE}, adjustment fit uses this formula. Need to
 include offset terms for desired parameter, e.g. y ~ offset(mu) uses fitted
 mu values from \code{object} fit, y ~ offset(mu) | offset(sigma) uses fitted
-mu and sigma values from \code{object}. See Details}
+mu and sigma values from \code{object}. If \code{NULL} (the default) and
+\code{which.params} is also \code{NULL}, it is derived automatically: every moment
+whose predictor contains \code{rm.term} gets an estimated shift \code{offset(param)},
+and every other moment is frozen at the original fit with \code{offset(param) - 1}
+(so shifts are conditioned on the untouched moments rather than re-estimating
+them off the reference batch). See Details}
 
-\item{which.params}{Parameters to adjust}
+\item{which.params}{Parameters to adjust. If \code{NULL} (the default) and
+\code{newformula} is also \code{NULL}, defaults to the moments that contain \code{rm.term}.
+Supplying either \code{newformula} or \code{which.params} disables auto-derivation and
+the other falls back to its legacy mu/sigma default.}
 
 \item{traindata}{Data originally used to fit \code{object} (\code{gamlss} method only).
 Only used by the predict-based path (see Details): models built from \code{pb()}

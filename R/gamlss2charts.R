@@ -17,16 +17,13 @@
 #' @param newformula If `adjust=TRUE`, adjustment fit uses this formula. Need to
 #'   include offset terms for desired parameter, e.g. y ~ offset(mu) uses fitted
 #'   mu values from `object` fit, y ~ offset(mu) | offset(sigma) uses fitted
-#'   mu and sigma values from `object`. See Details
-#' @param which.params Parameters to adjust
+#'   mu and sigma values from `object`. If `NULL` (the default) AND
+#'   `which.params` is also `NULL`, it is derived automatically. See Details
+#' @param which.params Parameters to adjust. If `NULL` (the default) AND
+#'   `newformula` is also `NULL`, defaults to the moments that contain `rm.term`.
 #' @param type Type of score to compute. See Details
-#' @param traindata Data originally used to fit `object` (`gamlss` method only).
-#'   Only used by the predict-based path (see Details): models built from `pb()`
-#'   smooths, `random()` effects and parametric terms are scored data-free and
-#'   never need it. For a model that also contains a gamlss smoother type not yet
-#'   reconstructed data-free (`cs()`, `ps()`, `ga()`/`s()`, ...) `traindata` is
-#'   required; if `NULL`, `predict()` falls back to re-evaluating the training
-#'   data from the model call (only works if it is still in scope).
+#' @param traindata Data originally used to fit `object` (`gamlss` method only, 
+#'   see Details).
 #'
 #' @return Vector of scores of length equal to number of rows in `newdata`
 #' @export
@@ -36,8 +33,13 @@
 #' When `adjust=TRUE`, fixes the predictions from `object` as offsets for an
 #' adjustment model. These offsets need to be specified in `newformula`. Then,
 #' the adjustment model is fit, adjustment parameters are combined with the
-#' offsets for `which.params`, and scores are computed. See references for more
-#' details. For \link[gamlss]{gamlss} fits with `adjust=TRUE`, the batch term
+#' offsets for `which.params`, and scores are computed. By default, both the
+#' batch offset formula (`newformula`) and parameters to adjust (`which.params`)
+#' are derived automatically from model object. Supplying either `newformula` or 
+#' `which.params` disables auto-derivation and the other falls back to its legacy 
+#' mu/sigma default (NOTE: should be updated!). See references for more details. 
+#' 
+#' For \link[gamlss]{gamlss} fits with `adjust=TRUE`, the batch term
 #' `rm.term` may be a fixed factor, a smooth, or a \link[gamlss]{random} effect:
 #' offsets set `rm.term` to its baseline (the population mean for a centered
 #' random effect, the reference level for a fixed factor) and its site-specific
@@ -47,21 +49,17 @@
 #' supported, since predicting an unseen level returns `NA`.) If passing data with
 #' levels already included in the training data, `rm.term` and `adjust` will
 #' throw out the model's fitted batch estimate and recompute the offset.
-#' 
 #'
-#' By default a \link[gamlss]{gamlss} fit built from parametric terms,
-#' \link[gamlss]{pb} smooths and/or \link[gamlss]{random} effects (including
-#' purely parametric fits with no smooths) is scored WITHOUT the original fitting
-#' data: batch-baseline offsets are rebuilt from the parametric coefficients,
+#' By default a \link[gamlss]{gamlss} fit is scored WITHOUT the original fitting
+#' data whenever possible: batch-baseline offsets are rebuilt from the parametric coefficients,
 #' the stored spline coefficients and interpolation functions, and the stored
 #' per-level random-effect BLUPs (levels unseen in the fit default to the
 #' population value 0). This is exact for `adjust=TRUE` (any fixed-factor baseline
-#' difference is absorbed by the adjustment model). Other \link[gamlss]{gamlss} smoother types
-#' (`cs()`, `ps()`, `ga()`/`s()`, ...) are not yet reconstructed data-free, so a
-#' model with a kept one falls back to the predict-based path and needs
-#' `traindata`. (This concerns only the \link[gamlss]{gamlss} method;
-#' \link[gamlss2]{gamlss2} fits predict their `s()`/`ga()` smooths without the
-#' original data natively, so `predict_score.gamlss2` is unaffected.)
+#' difference is absorbed by the adjustment model). Some \link[gamlss]{gamlss} smoother types
+#' (`cs()`, `ps()`, `ga()`/`s()`, ...) are not supported, so models with such smooths
+#' outside `rm.term` (which is dropped) need `traindata`. (This concerns only the \link[gamlss]{gamlss} 
+#' method; \link[gamlss2]{gamlss2} fits predict their `s()`/`ga()` smooths without the
+#' original data natively.)
 #' 
 #' Lists of parameters can be provided as `object`. The list needs to have names `new`
 #' and/or `ref`, where parameters correspond to `newdata` and `refdata`
@@ -97,6 +95,77 @@
 # below (.gamlss2, .gamlss, or .list). `...` forwards all other arguments.
 predict_score <- function(object, ...) UseMethod("predict_score")
 
+# ---- internal: auto-derive the adjustment spec from rm.term ------------------
+# The moments whose linear predictor contains `rm.term`.
+# `moment_formulas` is a named list, one (one- or two-sided) formula
+# per parameter; NULL entries (parameter not modelled) never match.
+.params_with_term <- function(moment_formulas, rm.term) {
+  if (is.null(rm.term)) return(character(0))
+  keep <- vapply(moment_formulas, function(fo)
+    !is.null(fo) && rm.term %in% all.vars(fo), logical(1))
+  names(moment_formulas)[keep]
+}
+
+# Per-moment formulas for a gamlss2 fit: split the stored `Formula` by its `|`
+# components, aligned to the family's parameter names. Parameters beyond the
+# supplied components (modelled intercept-only) get NULL.
+.moment_formulas_gamlss2 <- function(object) {
+  mom <- object$family$names
+  F   <- Formula::Formula(object$formula)
+  n   <- length(attr(F, "rhs"))
+  stats::setNames(lapply(seq_along(mom), function(i)
+    if (i <= n) stats::formula(F, lhs = 0, rhs = i) else NULL), mom)
+}
+
+# Per-moment formulas for a gamlss (v1) fit: the stored <param>.formula slots.
+.moment_formulas_gamlss <- function(object) {
+  mom <- object$parameters
+  stats::setNames(lapply(mom, function(p) object[[paste0(p, ".formula")]]), mom)
+}
+
+# Build the adjustment `newformula`. Each moment carrying `rm.term` gets an
+# estimated batch shift via `offset(param)` (implicit intercept); every other
+# moment is frozen at the original fit with `offset(param) - 1` (no free
+# intercept), so the estimated shifts are conditioned on the correct values of
+# the untouched moments rather than letting them re-estimate off the reference
+# batch. LHS is `y` to match the response column both methods add to refdata.
+.build_adjust_formula <- function(moments, with_term) {
+  rhs <- ifelse(moments %in% with_term,
+                sprintf("offset(%s)", moments),
+                sprintf("offset(%s) - 1", moments))
+  stats::as.formula(paste("y ~", paste(rhs, collapse = " | ")))
+}
+
+# Resolve `newformula` / `which.params`. If the caller supplied either, stay in
+# manual mode (legacy default fills any still-NULL one). If both are NULL,
+# auto-derive from the moments that contain `rm.term`: adjust exactly those and
+# freeze the rest. With no such moment (e.g. `rm.term` NULL or absent) fall back
+# to the legacy mu/sigma default.
+.resolve_adjust_spec <- function(newformula, which.params, moments,
+                                 moment_formulas, rm.term) {
+  if (!is.null(newformula) || !is.null(which.params)) {
+    if (is.null(which.params)) {
+      which.params <- c("mu", "sigma")
+      warning("Only `newformula` provided, setting `which.params` as legacy `c('mu', 'sigma')`")
+    }
+    if (is.null(newformula)){
+      newformula   <- y ~ offset(mu) | offset(sigma)
+      warning("Only `which.params` provided, setting `newformula` as legacy `y ~ offset(mu) | offset(sigma)`")
+    }   
+    return(list(newformula = newformula, which.params = which.params))
+  }
+  with_term <- .params_with_term(moment_formulas, rm.term)
+  if (length(with_term) == 0L) {
+    if (!is.null(rm.term))
+      warning("`rm.term` ('", rm.term, "') was not found in any moment's ",
+              "predictor; falling back to adjusting mu and sigma.")
+    return(list(newformula = y ~ offset(mu) | offset(sigma),
+                which.params = c("mu", "sigma")))
+  }
+  list(newformula   = .build_adjust_formula(moments, with_term),
+       which.params = with_term)
+}
+
 #' @rdname predict_score
 #' @export
 predict_score.gamlss2 <-
@@ -104,8 +173,8 @@ predict_score.gamlss2 <-
            # `type` default is the first element, "cent" (centile score).
            type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
-           newformula = y ~ offset(mu) | offset(sigma),
-           which.params = c("mu", "sigma")) {
+           newformula = NULL,
+           which.params = NULL) {
     type = match.arg(type)
 
     if (!is.null(rm.term) && !adjust) {
@@ -123,6 +192,12 @@ predict_score.gamlss2 <-
     feat <- all.vars(formula(object))[1]
     # Terms to predict from: all variables except feat and rm.term
     mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
+    # Resolve the adjustment spec: honor explicit args, else auto-derive from the
+    # moments containing rm.term (adjust those, freeze the rest).
+    spec <- .resolve_adjust_spec(newformula, which.params, object$family$names,
+                                 .moment_formulas_gamlss2(object), rm.term)
+    newformula   <- spec$newformula
+    which.params <- spec$which.params
     # Turn parameter names into named integer column indices (mu=1, sigma=2,
     # nu=3, tau=4); used later to pick which parameter columns get adjusted.
     which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
@@ -178,8 +253,7 @@ predict_score.gamlss2 <-
       # Adding `pred` again here may double-count the offset. Flagging only.
       params <- family(fit2)$map2par(pred + shift)
     } else {
-      # No adjustment: ask the original fit directly for natural-scale parameters
-      # (equivalent to predict.gamlss2).
+      # No adjustment
       params <- predict(object, newdata = newdata, type = "parameter", terms = mterms)
     }
 
@@ -326,8 +400,8 @@ predict_score.gamlss <-
   function(object, newdata, refdata = NULL,
            type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
-           newformula = y ~ offset(mu) | offset(sigma),
-           which.params = c("mu", "sigma"), traindata = NULL) {
+           newformula = NULL,
+           which.params = NULL, traindata = NULL) {
     type = match.arg(type)
 
     if (!is.null(rm.term) && !adjust) {
@@ -347,6 +421,12 @@ predict_score.gamlss <-
     #need to update to list_predictors depending on robustness to smooths, models 
     #saved elsewhere, etc
     mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
+    # Resolve the adjustment spec: honor explicit args, else auto-derive from the
+    # moments containing rm.term (adjust those, freeze the rest).
+    spec <- .resolve_adjust_spec(newformula, which.params, object$parameters,
+                                 .moment_formulas_gamlss(object), rm.term)
+    newformula   <- spec$newformula
+    which.params <- spec$which.params
     which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
     if (is.null(refdata)) {
       refdata <- newdata

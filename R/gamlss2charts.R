@@ -22,7 +22,7 @@
 #' @param which.params Parameters to adjust. If `NULL` (the default) AND
 #'   `newformula` is also `NULL`, defaults to the moments that contain `rm.term`.
 #' @param type Type of score to compute. See Details
-#' @param traindata Data originally used to fit `object` (`gamlss` method only, 
+#' @param traindata Data originally used to fit `object` (`gamlss` method only,
 #'   see Details).
 #'
 #' @return Vector of scores of length equal to number of rows in `newdata`
@@ -35,10 +35,10 @@
 #' the adjustment model is fit, adjustment parameters are combined with the
 #' offsets for `which.params`, and scores are computed. By default, both the
 #' batch offset formula (`newformula`) and parameters to adjust (`which.params`)
-#' are derived automatically from model object. Supplying either `newformula` or 
-#' `which.params` disables auto-derivation and the other falls back to its legacy 
-#' mu/sigma default (NOTE: should be updated!). See references for more details. 
-#' 
+#' are derived automatically from model object. Supplying either `newformula` or
+#' `which.params` disables auto-derivation and the other falls back to its legacy
+#' mu/sigma default (NOTE: should be updated!). See references for more details.
+#'
 #' For \link[gamlss]{gamlss} fits with `adjust=TRUE`, the batch term
 #' `rm.term` may be a fixed factor, a smooth, or a \link[gamlss]{random} effect:
 #' offsets set `rm.term` to its baseline (the population mean for a centered
@@ -57,10 +57,10 @@
 #' population value 0). This is exact for `adjust=TRUE` (any fixed-factor baseline
 #' difference is absorbed by the adjustment model). Some \link[gamlss]{gamlss} smoother types
 #' (`cs()`, `ps()`, `ga()`/`s()`, ...) are not supported, so models with such smooths
-#' outside `rm.term` (which is dropped) need `traindata`. (This concerns only the \link[gamlss]{gamlss} 
+#' outside `rm.term` (which is dropped) need `traindata`. (This concerns only the \link[gamlss]{gamlss}
 #' method; \link[gamlss2]{gamlss2} fits predict their `s()`/`ga()` smooths without the
 #' original data natively.)
-#' 
+#'
 #' Lists of parameters can be provided as `object`. The list needs to have names `new`
 #' and/or `ref`, where parameters correspond to `newdata` and `refdata`
 #' respectively. `feat` and `family` need to be specified, and should match with
@@ -95,77 +95,6 @@
 # below (.gamlss2, .gamlss, or .list). `...` forwards all other arguments.
 predict_score <- function(object, ...) UseMethod("predict_score")
 
-# ---- internal: auto-derive the adjustment spec from rm.term ------------------
-# The moments whose linear predictor contains `rm.term`.
-# `moment_formulas` is a named list, one (one- or two-sided) formula
-# per parameter; NULL entries (parameter not modelled) never match.
-.params_with_term <- function(moment_formulas, rm.term) {
-  if (is.null(rm.term)) return(character(0))
-  keep <- vapply(moment_formulas, function(fo)
-    !is.null(fo) && rm.term %in% all.vars(fo), logical(1))
-  names(moment_formulas)[keep]
-}
-
-# Per-moment formulas for a gamlss2 fit: split the stored `Formula` by its `|`
-# components, aligned to the family's parameter names. Parameters beyond the
-# supplied components (modelled intercept-only) get NULL.
-.moment_formulas_gamlss2 <- function(object) {
-  mom <- object$family$names
-  F   <- Formula::Formula(object$formula)
-  n   <- length(attr(F, "rhs"))
-  stats::setNames(lapply(seq_along(mom), function(i)
-    if (i <= n) stats::formula(F, lhs = 0, rhs = i) else NULL), mom)
-}
-
-# Per-moment formulas for a gamlss (v1) fit: the stored <param>.formula slots.
-.moment_formulas_gamlss <- function(object) {
-  mom <- object$parameters
-  stats::setNames(lapply(mom, function(p) object[[paste0(p, ".formula")]]), mom)
-}
-
-# Build the adjustment `newformula`. Each moment carrying `rm.term` gets an
-# estimated batch shift via `offset(param)` (implicit intercept); every other
-# moment is frozen at the original fit with `offset(param) - 1` (no free
-# intercept), so the estimated shifts are conditioned on the correct values of
-# the untouched moments rather than letting them re-estimate off the reference
-# batch. LHS is `y` to match the response column both methods add to refdata.
-.build_adjust_formula <- function(moments, with_term) {
-  rhs <- ifelse(moments %in% with_term,
-                sprintf("offset(%s)", moments),
-                sprintf("offset(%s) - 1", moments))
-  stats::as.formula(paste("y ~", paste(rhs, collapse = " | ")))
-}
-
-# Resolve `newformula` / `which.params`. If the caller supplied either, stay in
-# manual mode (legacy default fills any still-NULL one). If both are NULL,
-# auto-derive from the moments that contain `rm.term`: adjust exactly those and
-# freeze the rest. With no such moment (e.g. `rm.term` NULL or absent) fall back
-# to the legacy mu/sigma default.
-.resolve_adjust_spec <- function(newformula, which.params, moments,
-                                 moment_formulas, rm.term) {
-  if (!is.null(newformula) || !is.null(which.params)) {
-    if (is.null(which.params)) {
-      which.params <- c("mu", "sigma")
-      warning("Only `newformula` provided, setting `which.params` as legacy `c('mu', 'sigma')`")
-    }
-    if (is.null(newformula)){
-      newformula   <- y ~ offset(mu) | offset(sigma)
-      warning("Only `which.params` provided, setting `newformula` as legacy `y ~ offset(mu) | offset(sigma)`")
-    }   
-    return(list(newformula = newformula, which.params = which.params))
-  }
-  with_term <- .params_with_term(moment_formulas, rm.term)
-  if (length(with_term) == 0L) {
-    if (!is.null(rm.term))
-      warning("`rm.term` ('", rm.term, "') was not found in any moment's ",
-              "predictor; falling back to adjusting mu and sigma.")
-    return(list(newformula = y ~ offset(mu) | offset(sigma),
-                which.params = c("mu", "sigma")))
-  }
-  list(newformula   = .build_adjust_formula(moments, with_term),
-       which.params = with_term)
-}
-
 #' @rdname predict_score
 #' @export
 predict_score.gamlss2 <-
@@ -194,7 +123,7 @@ predict_score.gamlss2 <-
     mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
     # Resolve the adjustment spec: honor explicit args, else auto-derive from the
     # moments containing rm.term (adjust those, freeze the rest).
-    spec <- .resolve_adjust_spec(newformula, which.params, object$family$names,
+    spec <- .resolve_adjust_spec(newformula, which.params,
                                  .moment_formulas_gamlss2(object), rm.term)
     newformula   <- spec$newformula
     which.params <- spec$which.params
@@ -268,132 +197,6 @@ predict_score.gamlss2 <-
     )
   }
 
-# ---- internal: is a gamlss fit eligible for data-free prediction? ------------
-# rebuilds parametric terms (coef + design), pb() smooths (stored knots + coefficients) 
-# and random() effects (stored per-level BLUPs). Other gamlss smoother types (
-# cs, ps, ga/s, ...) are not currently implemented. TRUE = the model has NO kept
-# (non-dropped) smoother of an unsupported type
-.datafree_eligible_gamlss <- function(object, rm.term) {
-  ok <- TRUE
-  for (p in object$parameters) {
-    sm <- colnames(object[[paste0(p, ".s")]])
-    for (lab in sm) {
-      supported <- grepl("^pb\\(", lab) || grepl("^random\\(", lab)
-      dropped   <- !is.null(rm.term) && rm.term %in% all.vars(str2lang(lab))
-      if (!supported && !dropped) ok <- FALSE
-    }
-  }
-  ok
-}
-
-# ---- internal: data-free link-scale linear predictor for one parameter -------
-# Rebuilds parameter `p`'s link-scale predictor on `newdata` WITHOUT the original
-# fitting data, dropping `drop.term`. The parametric part is aligned to coef() BY NAME
-# (coef also carries an entry per smoother, so positional alignment is unsafe).
-# Each kept pb() term adds its linear coefficient * x plus the stored
-# interpolation function getSmo(...)$fun(x); each kept random() effect adds the
-# stored per-level BLUP getSmo(...)$coef[level] (unseen levels -> 0, the
-# population value). Only valid when model is data-free eligible (see 
-# .datafree_eligible_gamlss())
-.lp_nodata_gamlss <- function(object, p, newdata, drop.term = NULL) {
-  cf   <- coef(object, p)
-  tl   <- attr(terms(object[[paste0(p, ".formula")]]), "term.labels")
-  sm   <- colnames(object[[paste0(p, ".s")]]); if (is.null(sm)) sm <- character(0)
-  pb_lab     <- sm[grepl("^pb\\(", sm)]
-  random_lab <- sm[grepl("^random\\(", sm)]
-  param_lab  <- setdiff(tl, sm)                      # genuine parametric terms
-  xlev <- object[[paste0(p, ".xlevels")]]
-
-  # factor covariates -> training levels
-  for (fv in names(xlev)) {
-    if (!is.null(drop.term) && fv == drop.term) {
-      # drop.term -> constant
-      newdata[[fv]] <- factor(xlev[[fv]][1], levels = xlev[[fv]],
-                              ordered = is.ordered(newdata[[fv]]))
-    } else if (fv %in% names(newdata)) {
-      # align levels with training data (factor() keeps an already-ordered class)
-      newdata[[fv]] <- factor(newdata[[fv]], levels = xlev[[fv]],
-                              ordered = is.ordered(newdata[[fv]]))
-    }
-  }
-
-  # parametric part (intercept + genuine parametric terms), aligned by name
-  pfo <- if (length(param_lab)) stats::reformulate(param_lab) else ~1
-  mf  <- stats::model.frame(pfo, newdata, na.action = stats::na.pass)
-  Xp  <- stats::model.matrix(pfo, mf)
-  lp  <- as.numeric(Xp %*% cf[colnames(Xp)])
-
-  # pb() smooths: linear part (coef * x) + stored nonlinear interpolation
-  for (lab in pb_lab) {
-    vars <- all.vars(str2lang(lab))
-    if (!is.null(drop.term) && drop.term %in% vars) next   # pb on the batch var -> dropped
-    v  <- vars[1]
-    lp <- lp + cf[[lab]] * newdata[[v]] +
-      gamlss::getSmo(object, p, which = match(lab, sm))$fun(newdata[[v]])
-  }
-
-  # random() effects: add the stored per-level BLUP (unseen levels -> population 0)
-  for (lab in random_lab) {
-    vars <- all.vars(str2lang(lab))
-    if (!is.null(drop.term) && drop.term %in% vars) next   # dropped batch random effect
-    v    <- vars[1]
-    blup <- gamlss::getSmo(object, p, which = match(lab, sm))$coef
-    b    <- as.numeric(blup[as.character(newdata[[v]])])
-    if (anyNA(b)) {
-      warning("random(", v, "): ", sum(is.na(b)),
-              " level(s) not seen in the fit; their effect is set to 0 (population).")
-      b[is.na(b)] <- 0
-    }
-    lp <- lp + b
-  }
-  lp
-}
-
-# ---- internal: batch-baseline offsets for the gamlss method ------------------
-# Per-parameter link-scale predictions with the batch term set to its baseline
-# (population mean 0 for a random effect, reference level for a fixed factor). When
-# `datafree = TRUE` (default whenever every kept smoother is pb()/random(),
-# including purely parametric models) the reconstruction uses stored coefficients
-# + pb interpolation + random BLUPs and needs no original data; otherwise it goes
-# through predict.gamlss (type = "terms"/"link"), which requires the training
-# data in scope or via `traindata`.
-.pop_offset_gamlss <- function(object, scoredata, rm.term, params,
-                               traindata = NULL, datafree = FALSE) {
-  # Keep only the variables the model actually uses
-  model_vars <- unique(unlist(lapply(params, function(p)
-    all.vars(object[[paste0(p, ".formula")]]))))
-  scoredata <- scoredata[, intersect(model_vars, names(scoredata)), drop = FALSE]
-
-  #loop over moments
-  out <- lapply(params, function(p) {
-    #if non training data required, use alternate function
-    if (datafree) return(.lp_nodata_gamlss(object, p, scoredata, drop.term = rm.term))
-    fo <- object[[paste0(p, ".formula")]]
-    drop_term <- !is.null(rm.term) && !is.null(fo) && rm.term %in% all.vars(fo)
-    #eval if rm.term is present
-    if (drop_term) {
-      #use training data to predict without rm.term
-      args <- list(object, what = p, newdata = scoredata, type = "terms")
-      if (!is.null(traindata)) args$data <- traindata
-      tm <- do.call(predict, args)
-      ic <- attr(tm, "constant"); if (is.null(ic)) ic <- 0
-      # drop only columns whose variables include rm.term (matches "random(site)"
-      # and "site", but not look-alikes such as "prestige_site")
-      drop <- vapply(colnames(tm), function(cn) {
-        v <- tryCatch(all.vars(stats::reformulate(cn)), error = function(e) character(0))
-        rm.term %in% v
-      }, logical(1))
-      ic + rowSums(tm[, !drop, drop = FALSE])
-    } else {
-      #use training data to predict
-      args <- list(object, what = p, newdata = scoredata, type = "link")
-      if (!is.null(traindata)) args$data <- traindata
-      as.numeric(do.call(predict, args))
-    }
-  })
-  as.data.frame(setNames(out, params))
-}
-
 #' @rdname predict_score
 #' @export
 predict_score.gamlss <-
@@ -401,7 +204,8 @@ predict_score.gamlss <-
            type = c("cent", "resid", "zscore", "quantile", "parameter"),
            adjust = TRUE, rm.term = NULL,
            newformula = NULL,
-           which.params = NULL, traindata = NULL) {
+           which.params = NULL,
+           traindata = NULL) {
     type = match.arg(type)
 
     if (!is.null(rm.term) && !adjust) {
@@ -417,13 +221,10 @@ predict_score.gamlss <-
     }
 
     feat <- as.character(object$mu.formula[[2]])
-    ###EDIT: object$model returns NULL, borrowing code from gamlss2 method - may
-    #need to update to list_predictors depending on robustness to smooths, models 
-    #saved elsewhere, etc
-    mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
+
     # Resolve the adjustment spec: honor explicit args, else auto-derive from the
     # moments containing rm.term (adjust those, freeze the rest).
-    spec <- .resolve_adjust_spec(newformula, which.params, object$parameters,
+    spec <- .resolve_adjust_spec(newformula, which.params,
                                  .moment_formulas_gamlss(object), rm.term)
     newformula   <- spec$newformula
     which.params <- spec$which.params
@@ -448,15 +249,17 @@ predict_score.gamlss <-
         if (fv %in% names(d)) {
           unseen <- setdiff(na.omit(as.character(unique(d[[fv]]))), known_levels[[fv]])
           if (length(unseen))
-            stop("factor `", fv, "` in ", nm, " has new level", paste(unseen, collapse = ", "), 
+            stop("factor `", fv, "` in ", nm, " has new level", paste(unseen, collapse = ", "),
                  ". Only `rm.term` may introduce unseen levels.")
         }
       }
     }
 
+    ###NOTE: may make more sense to add option to override use_datafree by providing traindata -
+    # basically what im implementing now in gamlssTools, so you can compare datafree vs traindata outputs
     use_datafree <- .datafree_eligible_gamlss(object, rm.term)
-    if (!use_datafree && is.null(traindata)) {
-      stop("this model has a kept smoother type (cs/ps/ga/s) that is not yet ",
+      if (!use_datafree && is.null(traindata)) {
+      stop("This model has a kept smoother type (cs/ps/ga/s) that is not yet ",
            "reconstructed data-free. Supply `traindata` (the original fitting ",
            "data) to use the predict-based path.")
     }
@@ -479,9 +282,7 @@ predict_score.gamlss <-
     }
 
     if (adjust) {
-      # The adjustment model estimates ONE batch shift for all of `refdata`, so
-      # `rm.term` must be a single batch level shared by newdata and refdata --
-      # multiple levels would be silently pooled into one (averaged) adjustment.
+      # `rm.term` must be a single batch level shared by newdata and refdata for adjustment
       if (!is.null(rm.term)) {
         new_lv <- unique(as.character(newdata[[rm.term]]))
         ref_lv <- unique(as.character(refdata[[rm.term]]))
@@ -507,14 +308,15 @@ predict_score.gamlss <-
       # apply fit2 estimates, which are shifts to the original parameters
       shift <- predict(fit2, newdata = newdata, type = "link")
       shift[,-which.params] <- 0
-      # off_new is a data.frame of the offset columns, added elementwise to shift.
       params <- family(fit2)$map2par(off_new + shift)
     } else {
+      #no adjustment
       pnames <- c("mu", "sigma", "nu", "tau")[which.params]
       if (use_datafree) {
         links <- setNames(lapply(pnames, function(pp)
           .lp_nodata_gamlss(object, pp, newdata, drop.term = rm.term)), pnames)
       } else {
+        mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
         links <- predictAll(object, newdata = newdata, type = "link", terms = mterms)[which.params]
         names(links) <- pnames
       }

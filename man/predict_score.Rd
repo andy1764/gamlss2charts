@@ -65,25 +65,14 @@ usually a batch variable (e.g. setting random effects to zero)}
 \item{newformula}{If \code{adjust=TRUE}, adjustment fit uses this formula. Need to
 include offset terms for desired parameter, e.g. y ~ offset(mu) uses fitted
 mu values from \code{object} fit, y ~ offset(mu) | offset(sigma) uses fitted
-mu and sigma values from \code{object}. If \code{NULL} (the default) and
-\code{which.params} is also \code{NULL}, it is derived automatically: every moment
-whose predictor contains \code{rm.term} gets an estimated shift \code{offset(param)},
-and every other moment is frozen at the original fit with \code{offset(param) - 1}
-(so shifts are conditioned on the untouched moments rather than re-estimating
-them off the reference batch). See Details}
+mu and sigma values from \code{object}. If \code{NULL} (the default) AND
+\code{which.params} is also \code{NULL}, it is derived automatically. See Details}
 
-\item{which.params}{Parameters to adjust. If \code{NULL} (the default) and
-\code{newformula} is also \code{NULL}, defaults to the moments that contain \code{rm.term}.
-Supplying either \code{newformula} or \code{which.params} disables auto-derivation and
-the other falls back to its legacy mu/sigma default.}
+\item{which.params}{Parameters to adjust. If \code{NULL} (the default) AND
+\code{newformula} is also \code{NULL}, defaults to the moments that contain \code{rm.term}.}
 
-\item{traindata}{Data originally used to fit \code{object} (\code{gamlss} method only).
-Only used by the predict-based path (see Details): models built from \code{pb()}
-smooths, \code{random()} effects and parametric terms are scored data-free and
-never need it. For a model that also contains a gamlss smoother type not yet
-reconstructed data-free (\code{cs()}, \code{ps()}, \code{ga()}/\code{s()}, ...) \code{traindata} is
-required; if \code{NULL}, \code{predict()} falls back to re-evaluating the training
-data from the model call (only works if it is still in scope).}
+\item{traindata}{Data originally used to fit \code{object} (\code{gamlss} method only,
+see Details).}
 }
 \value{
 Vector of scores of length equal to number of rows in \code{newdata}
@@ -99,8 +88,13 @@ When \code{adjust=FALSE}, essentially the same as \link[gamlss2]{predict.gamlss2
 When \code{adjust=TRUE}, fixes the predictions from \code{object} as offsets for an
 adjustment model. These offsets need to be specified in \code{newformula}. Then,
 the adjustment model is fit, adjustment parameters are combined with the
-offsets for \code{which.params}, and scores are computed. See references for more
-details. For \link[gamlss]{gamlss} fits with \code{adjust=TRUE}, the batch term
+offsets for \code{which.params}, and scores are computed. By default, both the
+batch offset formula (\code{newformula}) and parameters to adjust (\code{which.params})
+are derived automatically from model object. Supplying either \code{newformula} or
+\code{which.params} disables auto-derivation and the other falls back to its legacy
+mu/sigma default (NOTE: should be updated!). See references for more details.
+
+For \link[gamlss]{gamlss} fits with \code{adjust=TRUE}, the batch term
 \code{rm.term} may be a fixed factor, a smooth, or a \link[gamlss]{random} effect:
 offsets set \code{rm.term} to its baseline (the population mean for a centered
 random effect, the reference level for a fixed factor) and its site-specific
@@ -111,19 +105,16 @@ supported, since predicting an unseen level returns \code{NA}.) If passing data 
 levels already included in the training data, \code{rm.term} and \code{adjust} will
 throw out the model's fitted batch estimate and recompute the offset.
 
-By default a \link[gamlss]{gamlss} fit built from parametric terms,
-\link[gamlss]{pb} smooths and/or \link[gamlss]{random} effects (including
-purely parametric fits with no smooths) is scored WITHOUT the original fitting
-data: batch-baseline offsets are rebuilt from the parametric coefficients,
+By default a \link[gamlss]{gamlss} fit is scored WITHOUT the original fitting
+data whenever possible: batch-baseline offsets are rebuilt from the parametric coefficients,
 the stored spline coefficients and interpolation functions, and the stored
 per-level random-effect BLUPs (levels unseen in the fit default to the
 population value 0). This is exact for \code{adjust=TRUE} (any fixed-factor baseline
-difference is absorbed by the adjustment model). Other \link[gamlss]{gamlss} smoother types
-(\code{cs()}, \code{ps()}, \code{ga()}/\code{s()}, ...) are not yet reconstructed data-free, so a
-model with a kept one falls back to the predict-based path and needs
-\code{traindata}. (This concerns only the \link[gamlss]{gamlss} method;
-\link[gamlss2]{gamlss2} fits predict their \code{s()}/\code{ga()} smooths without the
-original data natively, so \code{predict_score.gamlss2} is unaffected.)
+difference is absorbed by the adjustment model). Some \link[gamlss]{gamlss} smoother types
+(\code{cs()}, \code{ps()}, \code{ga()}/\code{s()}, ...) are not supported, so models with such smooths
+outside \code{rm.term} (which is dropped) need \code{traindata}. (This concerns only the \link[gamlss]{gamlss}
+method; \link[gamlss2]{gamlss2} fits predict their \code{s()}/\code{ga()} smooths without the
+original data natively.)
 
 Lists of parameters can be provided as \code{object}. The list needs to have names \code{new}
 and/or \code{ref}, where parameters correspond to \code{newdata} and \code{refdata}

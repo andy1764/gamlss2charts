@@ -12,8 +12,7 @@ gold_g2 <- function(fitA, score_dat)
 
 # resolved (auto) spec for a gamlss2 fit
 auto_spec_g2 <- function(fit, rm.term = "site")
-  .resolve_adjust_spec(NULL, NULL, fit$family$names,
-                       .moment_formulas_gamlss2(fit), rm.term)
+  .resolve_adjust_spec(NULL, NULL, .moment_formulas_gamlss2(fit), rm.term)
 
 ## ---- gamlss2: correct moment selection -------------------------------------
 
@@ -62,23 +61,21 @@ test_that("gamlss2 auto call (no formula args) agrees with in-sample gold", {
 
 test_that("supplying either arg disables auto-derivation", {
   # which.params only -> newformula falls back to the legacy mu|sigma default
-  s1 <- .resolve_adjust_spec(NULL, "mu", c("mu", "sigma", "nu"),
+  s1 <- .resolve_adjust_spec(NULL, "mu",
                              list(mu = ~ site, sigma = ~ 1, nu = ~ 1), "site")
   expect_equal(s1$which.params, "mu")
   expect_equal(deparse1(s1$newformula), "y ~ offset(mu) | offset(sigma)")
   # newformula only -> which.params falls back to legacy c("mu","sigma")
-  s2 <- .resolve_adjust_spec(y ~ offset(mu), NULL, c("mu", "sigma"),
+  s2 <- .resolve_adjust_spec(y ~ offset(mu), NULL,
                              list(mu = ~ site, sigma = ~ 1), "site")
   expect_equal(s2$which.params, c("mu", "sigma"))
 })
 
-test_that("rm.term absent from every moment warns and falls back to mu/sigma", {
-  expect_warning(
-    s <- .resolve_adjust_spec(NULL, NULL, c("mu", "sigma"),
-                              list(mu = ~ x, sigma = ~ 1), "site"),
+test_that("rm.term absent from every moment errors", {
+  expect_error(
+    .resolve_adjust_spec(NULL, NULL,
+                         list(mu = ~ x, sigma = ~ 1), "site"),
     "not found in any moment")
-  expect_equal(s$which.params, c("mu", "sigma"))
-  expect_equal(deparse1(s$newformula), "y ~ offset(mu) | offset(sigma)")
 })
 
 ## ---- gamlss (v1) method -----------------------------------------------------
@@ -87,7 +84,7 @@ test_that("gamlss v1 auto: site in mu only -> adjust mu, freeze sigma", {
   skip_if_not_installed("gamlss")
   d  <- split_site(sim_site_normal())
   fB <- gamlss::gamlss(y ~ x + site, family = NO, data = d$train, trace = FALSE)
-  s  <- .resolve_adjust_spec(NULL, NULL, fB$parameters,
+  s  <- .resolve_adjust_spec(NULL, NULL,
                              .moment_formulas_gamlss(fB), "site")
   expect_equal(unname(s$which.params), "mu")
   expect_equal(deparse1(s$newformula), "y ~ offset(mu) | offset(sigma) - 1")
@@ -98,7 +95,7 @@ test_that("gamlss v1 auto: site in mu AND sigma -> adjust both", {
   d  <- split_site(sim_site_normal())
   fB <- gamlss::gamlss(y ~ x + site, sigma.formula = ~ x + site,
                        family = NO, data = d$train, trace = FALSE)
-  s  <- .resolve_adjust_spec(NULL, NULL, fB$parameters,
+  s  <- .resolve_adjust_spec(NULL, NULL,
                              .moment_formulas_gamlss(fB), "site")
   expect_equal(unname(s$which.params), c("mu", "sigma"))
   expect_equal(deparse1(s$newformula), "y ~ offset(mu) | offset(sigma)")
@@ -109,7 +106,7 @@ test_that("gamlss v1 auto (GG): non-rm.term moments frozen with offset()-1", {
   d  <- split_site(sim_site_gg())
   fB <- gamlss::gamlss(y ~ x + site, sigma.formula = ~ 1,
                        family = GG, data = d$train, trace = FALSE)
-  s  <- .resolve_adjust_spec(NULL, NULL, fB$parameters,
+  s  <- .resolve_adjust_spec(NULL, NULL,
                              .moment_formulas_gamlss(fB), "site")
   expect_equal(unname(s$which.params), "mu")
   expect_equal(deparse1(s$newformula),

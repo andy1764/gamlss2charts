@@ -4,11 +4,13 @@
 
 **Maintainer**: Andrew A. Chen, chenandr@musc.edu
 
+**Contributors**: Margaret Gardner, margaret.gardner@pennmedicine.upenn.edu
+
 **License**: MIT License
 
 `gamlss2charts` includes additional functions based on gamlss2, with backwards compatibility for gamlss (WIP). Currently, our package contains `predict_score` for out-of-sample scoring (i.e. centile scoring) based on previous works (see references). 
 
-This package is still a work-in-progress and will be continually supported and updated to include additional functionalities.
+This package is still a work-in-progress and will be continually supported and updated to include additional functionalities. This development branch is experimental, but includes ongoing bug fixes and features (new defaults for model adjustment, improved gamlss compatibility, etc.)
 
 ## 1. Installation
 The latest version can be installed via `remotes` by running the following code

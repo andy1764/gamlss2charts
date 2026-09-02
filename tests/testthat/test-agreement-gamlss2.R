@@ -58,3 +58,25 @@ test_that("Non-normal family (GG)", {
   expect_agree(centA, b$cent, mean_diff = 0.03,
                zA = qnorm(centA), zB = b$quant, z_mean_diff = 0.12)
 })
+
+test_that("Four-parameter family (BCT), adjust all", {
+  d <- split_site(sim_site_gg())
+  fitA <- gamlss2(y ~ x + site | . | . | ., family = BCT, data = d$full)
+  fitB <- gamlss2(y ~ x + site | . | . | ., family = BCT, data = d$train)
+  centA <- gold_g2(fitA, d$new)
+  b <- score_both(fitB, d$new, NULL, "mu")
+  # GG carries a small systematic mean offset -> looser mean tolerances
+  expect_agree(centA, b$cent, mean_diff = 0.03,
+               zA = qnorm(centA), zB = b$quant, z_mean_diff = 0.12)
+})
+
+test_that("Four-parameter family (BCT), adjust mu/sigma", {
+  d <- split_site(sim_site_gg())
+  fitA <- gamlss2(y ~ x + site | . | . | ., family = BCT, data = d$full)
+  fitB <- gamlss2(y ~ x + site | . | . | ., family = BCT, data = d$train)
+  centA <- gold_g2(fitA, d$new)
+  b <- score_both(fitB, d$new, NULL, c("mu", "sigma"))
+  # GG carries a small systematic mean offset -> looser mean tolerances
+  expect_agree(centA, b$cent, mean_diff = 0.03,
+               zA = qnorm(centA), zB = b$quant, z_mean_diff = 0.12)
+})

@@ -142,7 +142,7 @@ predict_score.gamlss2 <-
     # to the fit's stored xlevels and reorder refdata's levels to match. The effect
     # is still excluded from prediction via `mterms`
     if (!is.null(rm.term)) {
-      for (par in names(which.params)) {
+      for (par in c("mu", "sigma", "nu", "tau")) {
         oldlevels <- object$xlevels[[par]][[rm.term]]
         newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
         object$xlevels[[par]][[rm.term]] <- c(oldlevels, newlevels)

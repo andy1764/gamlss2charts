@@ -18,15 +18,15 @@ test_that("Realistic: BCTo with pb(x) + z + random(site)", {
   new <- gen_site("siteNEW", 100, 0.6, 99); new$site <- factor("siteNEW")
   full <- rbind(train, new); full$site <- factor(full$site)
 
-  form  <- y ~ pb(x) + z + random(site)
-  fitA  <- gamlss(form, sigma.formula = ~ pb(x) + z + random(site), family = BCTo,
+  form  <- y ~ pb(x) + z + gamlss::random(site)
+  fitA  <- gamlss(form, sigma.formula = ~ pb(x) + z + gamlss::random(site), family = BCTo,
                   data = full, trace = FALSE)
   pA    <- predictAll(fitA, newdata = new, data = full)
   centA <- gamlss.dist::pBCTo(new$y, mu = pA$mu, sigma = pA$sigma, nu = pA$nu, tau = pA$tau)
 
-  fitB  <- gamlss(form, sigma.formula = ~ pb(x) + z + random(site), family = BCTo,
+  fitB  <- gamlss(form, sigma.formula = ~ pb(x) + z + gamlss::random(site), family = BCTo,
                   data = train, trace = FALSE)
-  b <- score_both(fitB, new, y ~ offset(mu) | offset(sigma), c("mu", "sigma"))
+  b <- score_both(fitB, new, NULL, NULL)
   # looser tolerances: small siteNEW n + random-effect shrinkage, and the z-scale
   # is wider than [0,1]. Checks centiles AND z-scores (quantile residuals).
   expect_agree(centA, b$cent, cor_min = 0.98, max_diff = 0.12, mean_diff = 0.06,

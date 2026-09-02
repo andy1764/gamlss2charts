@@ -14,13 +14,13 @@
 #'   usually a batch variable (e.g. setting random effects to zero)
 #' @param adjust Whether to fit adjustment parameters on the new data (e.g.
 #'   getting batch adjustments for a new site)
-#' @param newformula If `adjust=TRUE`, adjustment fit uses this formula. Need to
-#'   include offset terms for desired parameter, e.g. y ~ offset(mu) uses fitted
-#'   mu values from `object` fit, y ~ offset(mu) | offset(sigma) uses fitted
-#'   mu and sigma values from `object`. If `NULL` (the default) AND
-#'   `which.params` is also `NULL`, it is derived automatically. See Details
 #' @param which.params Parameters to adjust. If `NULL` (the default) AND
-#'   `newformula` is also `NULL`, defaults to the moments that contain `rm.term`.
+#'  `newformula` is also `NULL`, defaults to the moments that contain
+#'  `rm.term`. Ignored if `newformula` is specified.
+#' @param newformula If `adjust=TRUE`, adjustment fit uses this formula. If
+#'  `NULL` (recommended), it is derived automatically from `which.params` or
+#'  `rm.term`. If specified, overrides automatic generation (NOT recommended).
+#'  See Details.
 #' @param type Type of score to compute. See Details
 #' @param traindata Data originally used to fit `object` (`gamlss` method only,
 #'   see Details).
@@ -29,15 +29,17 @@
 #' @export
 #'
 #' @details
-#' When `adjust=FALSE`, essentially the same as \link[gamlss2]{predict.gamlss2}.
-#' When `adjust=TRUE`, fixes the predictions from `object` as offsets for an
-#' adjustment model. These offsets need to be specified in `newformula`. Then,
-#' the adjustment model is fit, adjustment parameters are combined with the
-#' offsets for `which.params`, and scores are computed. By default, both the
-#' batch offset formula (`newformula`) and parameters to adjust (`which.params`)
-#' are derived automatically from model object. Supplying either `newformula` or
-#' `which.params` disables auto-derivation and the other falls back to its legacy
-#' mu/sigma default (NOTE: should be updated!). See references for more details.
+#' When `adjust=FALSE`, essentially the same as \link[gamlss2]{predict.gamlss2}
+#' or \link[gamlss]{predict.gamlss}. When `adjust=TRUE`, estimates an adjustment
+#' model using `refdata`. By default, the adjustment model includes all
+#' parameters that originally included `rm.term` (usually a batch
+#' variable) or the parameters specified via `which.params`. A formula can be
+#' supplied via `newformula`, but this is NOT recommended since offsets need to
+#' be carefully specified. For example, for a normal family fit,
+#' `y ~ offset(mu) | offset(sigma)` will adjust mu and sigma.
+#' `y ~ offset(mu) | offset(sigma) - 1` will adjust mu and use original sigma.
+#' `y ~ offset(mu)` will adjust mu and NOT use the original sigma.
+#' The latter case is unadvisable, and will lead to poor results.
 #'
 #' For \link[gamlss]{gamlss} fits with `adjust=TRUE`, the batch term
 #' `rm.term` may be a fixed factor, a smooth, or a \link[gamlss]{random} effect:
@@ -101,16 +103,15 @@ predict_score.gamlss2 <-
   function(object, newdata, refdata = NULL,
            # `type` default is the first element, "cent" (centile score).
            type = c("cent", "resid", "zscore", "quantile", "parameter"),
-           adjust = TRUE, rm.term = NULL,
-           newformula = NULL,
-           which.params = NULL) {
+           rm.term = NULL, adjust = TRUE, which.params = NULL,
+           newformula = NULL) {
     type = match.arg(type)
 
     if (!is.null(rm.term) && !adjust) {
       warning("`rm.term` is set with `adjust = FALSE`: the '", rm.term, "' effect ",
               "is removed but not re-estimated/batch-adjusted for the new data. For a random ",
               "effect this sets it to the population mean (0); for a fixed factor ",
-              "it sets it to the reference level. Use `adjust = TRUE` to estimate ",
+              "it sets it to the reference level. We recommend using `adjust = TRUE` to estimate ",
               "and apply a batch adjustment.")
     }
 
@@ -119,40 +120,36 @@ predict_score.gamlss2 <-
     }
 
     feat <- all.vars(formula(object))[1]
-    # Terms to predict from: all variables except feat and rm.term
     mterms <- c("Intercept", setdiff(all.vars(formula(object)), c(feat, rm.term)))
-    # Resolve the adjustment spec: honor explicit args, else auto-derive from the
-    # moments containing rm.term (adjust those, freeze the rest).
-    spec <- .resolve_adjust_spec(newformula, which.params,
-                                 .moment_formulas_gamlss2(object), rm.term)
-    newformula   <- spec$newformula
-    which.params <- spec$which.params
-    # Turn parameter names into named integer column indices (mu=1, sigma=2,
-    # nu=3, tau=4); used later to pick which parameter columns get adjusted.
-    which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
-    # If no reference data is given, use newdata as its own reference.
-    if (is.null(refdata)) {
-      refdata <- newdata
+    spec <- .resolve_adjust_spec(.moment_formulas_gamlss2(object), which.params, rm.term)
+
+    # Replace newformula and which.params with defaults
+    if (is.null(newformula)) {
+      newformula <- spec$newformula
+      which.params <- spec$which.params
     } else {
-      #confirm all newdata levels are in refdata
-      stopifnot("Not all levels of rm.term in newdata are present in refdata " = levels(newdata[[rm.term]]) %in% levels(refdata[[rm.term]]))
+      which.params <- spec$which.params
     }
 
-    # match rm.term factor levels to original fit, appending unseen levels
-    # to the fit's stored xlevels and reorder refdata's levels to match. The effect
-    # is still excluded from prediction via `mterms`
+    # include newdata factor levels to avoid errors
     if (!is.null(rm.term)) {
-      for (par in c("mu", "sigma", "nu", "tau")) {
+      for (par in which.params) {
         oldlevels <- object$xlevels[[par]][[rm.term]]
-        newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
+        newlevels <- setdiff(levels(newdata[[rm.term]]), oldlevels)
         object$xlevels[[par]][[rm.term]] <- c(oldlevels, newlevels)
       }
     }
 
     if (adjust) {
-      # The adjustment model estimates ONE batch shift for all of `refdata`, so
-      # `rm.term` must be a single batch level shared by newdata and refdata --
-      # multiple levels would be silently pooled into one (averaged) adjustment.
+      # Use newdata as reference data unless provided
+      if (is.null(refdata)) {
+        refdata <- newdata
+      } else {
+        #confirm all newdata levels are in refdata
+        stopifnot("Not all levels of rm.term in newdata are present in refdata " = levels(newdata[[rm.term]]) %in% levels(refdata[[rm.term]]))
+      }
+
+      # `rm.term` must be a single batch level shared by newdata and refdata for adjustment
       if (!is.null(rm.term)) {
         new_lv <- unique(as.character(newdata[[rm.term]]))
         ref_lv <- unique(as.character(refdata[[rm.term]]))
@@ -163,28 +160,23 @@ predict_score.gamlss2 <-
                paste(new_lv, collapse = ", "), "; refdata level(s): ",
                paste(ref_lv, collapse = ", "), ".")
       }
-      refdata$y <- refdata[[feat]]  # `newformula`'s LHS is `y`, so copy the response into `y`
-      # get offsets for refdata and fit adjustment model.
-      pred2 <- predict(object, newdata = refdata, type = "link", terms = mterms)
-      refdata <- cbind(refdata, pred2)  # add mu/sigma... columns for the offset() terms
-      fit2 <- gamlss2::gamlss2(newformula, data = refdata, family = object$family)
 
-      # get offsets for newdata
+      # Get offsets for refdata
+      refdata$y <- refdata[[feat]]
+      pred2 <- predict(object, newdata = refdata, type = "link", terms = mterms)
+      refdata <- cbind(refdata, pred2)
+      fit2 <- gamlss2(newformula, data = refdata, family = object$family)
+
+      # Get offsets for newdata
       newdata$y <- newdata[[feat]]
       pred <- predict(object, newdata = newdata, type = "link", terms = mterms)
       newdata <- cbind(newdata, pred)
 
-      # apply fit2 estimates (shifts to the original parameters) to newdata
+      # Apply fit2 estimates (shifts to the original parameters) to newdata
+      # Note: fit2 does not include offsets in predict(fit2)
       shift <- predict(fit2, newdata = newdata, type = "link")
-      shift[,-which.params] <- 0  # zero out any parameters not requested for adjustment
-      # Combine frozen offsets with estimated shifts on the link scale, then
-      # map2par() inverts the links back to natural parameter scale.
-      # NOTE (potential bug): fit2's linear predictor already includes the
-      # offset() terms, so predict(fit2, type="link") returns offset + shift.
-      # Adding `pred` again here may double-count the offset. Flagging only.
       params <- family(fit2)$map2par(pred + shift)
     } else {
-      # No adjustment
       params <- predict(object, newdata = newdata, type = "parameter", terms = mterms)
     }
 
@@ -222,15 +214,17 @@ predict_score.gamlss <-
       warning("Z-scores may not be valid for families other than NO")
     }
 
-    feat <- as.character(object$formula[[2]])
+    feat <- as.character(formula(object))[2]
+    spec <- .resolve_adjust_spec(.moment_formulas_gamlss(object), which.params, rm.term)
 
-    # Resolve the adjustment spec: honor explicit args, else auto-derive from the
-    # moments containing rm.term (adjust those, freeze the rest).
-    spec <- .resolve_adjust_spec(newformula, which.params,
-                                 .moment_formulas_gamlss(object), rm.term)
-    newformula   <- spec$newformula
-    which.params <- spec$which.params
-    which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
+    # Replace newformula and which.params with defaults
+    if (is.null(newformula)) {
+      newformula <- spec$newformula
+      which.params <- spec$which.params
+    } else {
+      which.params <- spec$which.params
+    }
+
     if (is.null(refdata)) {
       refdata <- newdata
     } else {
@@ -295,6 +289,7 @@ predict_score.gamlss <-
                paste(new_lv, collapse = ", "), "; refdata level(s): ",
                paste(ref_lv, collapse = ", "), ".")
       }
+
       # get offsets for refdata and fit adjustment model
       off_ref <- .pop_offset_gamlss(object, refdata, rm.term, object$parameters,
                                     traindata, datafree = use_datafree)
@@ -309,7 +304,6 @@ predict_score.gamlss <-
 
       # apply fit2 estimates, which are shifts to the original parameters
       shift <- predict(fit2, newdata = newdata, type = "link")
-      shift[,-which.params] <- 0
       params <- family(fit2)$map2par(off_new + shift)
     } else {
       #no adjustment

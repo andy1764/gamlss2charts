@@ -12,7 +12,7 @@ test_that("Basic: mu-only site effect", {
   centA <- gamlss.dist::pNO(d$new$y, mu = pA$mu, sigma = pA$sigma)
 
   fitB <- gamlss(y ~ x + site, sigma.formula = ~1, family = NO, data = d$train, trace = FALSE)
-  b <- score_both(fitB, d$new, y ~ offset(mu), "mu")
+  b <- score_both(fitB, d$new, NULL, "mu")
   expect_agree(centA, b$cent, zA = qnorm(centA), zB = b$quant)
 })
 
@@ -23,7 +23,7 @@ test_that("Batch effect in mu AND sigma (adjust both)", {
   centA <- gamlss.dist::pNO(d$new$y, mu = pA$mu, sigma = pA$sigma)
 
   fitB <- gamlss(y ~ x + site, sigma.formula = ~ x + site, family = NO, data = d$train, trace = FALSE)
-  b <- score_both(fitB, d$new, y ~ offset(mu) | offset(sigma), c("mu", "sigma"))
+  b <- score_both(fitB, d$new, NULL, c("mu", "sigma"))
   expect_agree(centA, b$cent, zA = qnorm(centA), zB = b$quant)
 })
 
@@ -34,7 +34,7 @@ test_that("Penalised spline pb(x)", {
   centA <- gamlss.dist::pNO(d$new$y, mu = pA$mu, sigma = pA$sigma)
 
   fitB <- gamlss(y ~ pb(x) + site, sigma.formula = ~1, family = NO, data = d$train, trace = FALSE)
-  b <- score_both(fitB, d$new, y ~ offset(mu), "mu")
+  b <- score_both(fitB, d$new, NULL, "mu")
   expect_agree(centA, b$cent, zA = qnorm(centA), zB = b$quant)
 })
 
@@ -45,8 +45,9 @@ test_that("Non-normal family (GG)", {
   centA <- gamlss.dist::pGG(d$new$y, mu = pA$mu, sigma = pA$sigma, nu = pA$nu)
 
   fitB <- gamlss(y ~ x + site, sigma.formula = ~1, family = GG, data = d$train, trace = FALSE)
-  b <- score_both(fitB, d$new, y ~ offset(mu), "mu")
+  b <- score_both(fitB, d$new, NULL, "mu")
   # GG carries a small systematic mean offset -> looser mean tolerances
   expect_agree(centA, b$cent, mean_diff = 0.03,
                zA = qnorm(centA), zB = b$quant, z_mean_diff = 0.12)
 })
+

@@ -43,37 +43,25 @@
 # manual mode for now (legacy default for other param). If both are NULL,
 # auto-derive from the moments that contain `rm.term`: adjust exactly those and
 # freeze the rest
-.resolve_adjust_spec <- function(newformula, which.params,
-                                 moment_formulas, rm.term) {
-  if (!is.null(newformula) || !is.null(which.params)) {
-    ###NOTE: may make more sense to have this be an error rather than defaulting to legacy
-    if (is.null(which.params)) {
-      which.params <- c("mu", "sigma")
-      warning("Only `newformula` provided, setting `which.params` as legacy `c('mu', 'sigma')`")
+
+# Function to create newformula from `which.params` and `rm.terms`
+# If neither provided, defaults to adjusting all parameters. If `which.params`
+# not provided, adjusts parameters that originally include `rm.term`. If
+# `which.params` is provided, adjusts specified parameters.
+.resolve_adjust_spec <- function(moment_formulas, which.params, rm.term) {
+  if (is.null(which.params) & is.null(rm.term)) {
+    # all parameters
+    which_params <- names(moment_formulas)
+  } else if (is.null(which.params)) {
+    # parameters that originally included rm.term
+    which_params <- .params_with_term(moment_formulas, rm.term)
+    if (length(which_params) == 0L) {
+      stop("`rm.term` ('", rm.term, "') was not found in any moment")
     }
-    if (is.null(newformula)){
-      newformula   <- y ~ offset(mu) | offset(sigma)
-      warning("Only `which.params` provided, setting `newformula` as legacy `y ~ offset(mu) | offset(sigma)`")
-    }
-    return(list(newformula = newformula, which.params = which.params))
+  } else {
+    which_params <- which.params
   }
 
-  #if null rm.term, return old defaults
-  if (is.null(rm.term)){
-    warning("No `which.params`, `newformula`, or `rm.term` provided:",
-            "falling back to legacy `which.params` as legacy `c('mu', 'sigma')`",
-            "and `newformula = y ~ offset(mu) | offset(sigma)`")
-    return(list(newformula = y ~ offset(mu) | offset(sigma),
-                which.params = c("mu", "sigma")))
-  }
-
-  #find rm.term across moments
-  with_term <- .params_with_term(moment_formulas, rm.term)
-  if (length(with_term) == 0L) {
-    stop("`rm.term` ('", rm.term, "') was not found in any moment")
-  }
-
-  #return auto-generated params
-  list(newformula   = .build_adjust_formula(names(moment_formulas), with_term),
-       which.params = with_term)
+  return(list(newformula = .build_adjust_formula(names(moment_formulas), which_params),
+              which.params = which_params))
 }

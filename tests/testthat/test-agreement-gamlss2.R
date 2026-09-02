@@ -7,7 +7,7 @@ skip_if_not_installed("gamlss2")
 
 # gold-standard centiles from a gamlss2 fit that includes siteNEW
 gold_g2 <- function(fitA, score_dat) {
-  fitA$family$cdf(q = score_dat$y,
+  fitA$family$cdf(score_dat$y,
                   par = predict(fitA, newdata = score_dat, type = "parameter"))
 }
 

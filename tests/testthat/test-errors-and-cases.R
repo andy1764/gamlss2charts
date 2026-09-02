@@ -35,7 +35,7 @@ test_that("Cases & controls: newdata (patients) differs from refdata (controls)"
   rownames(patients) <- NULL
 
   fitA  <- gamlss2(y ~ x + site | 1, family = NO, data = d$full)
-  centA <- fitA$family$cdf(q = patients$y, par = predict(fitA, newdata = patients, type = "parameter"))
+  centA <- fitA$family$cdf(patients$y, par = predict(fitA, newdata = patients, type = "parameter"))
   fitB  <- gamlss2(y ~ x + site | 1, family = NO, data = d$train)
   centB <- predict_score(fitB, newdata = patients, refdata = d$new, type = "cent",
                          adjust = TRUE, rm.term = "site",

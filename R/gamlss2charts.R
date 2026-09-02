@@ -142,9 +142,11 @@ predict_score.gamlss2 <-
     # to the fit's stored xlevels and reorder refdata's levels to match. The effect
     # is still excluded from prediction via `mterms`
     if (!is.null(rm.term)) {
-      oldlevels <- object$xlevels[[rm.term]]
-      newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
-      object$xlevels[[rm.term]] <- c(oldlevels, newlevels)
+      for (par in names(which.params)) {
+        oldlevels <- object$xlevels[[par]][[rm.term]]
+        newlevels <- setdiff(levels(refdata[[rm.term]]), oldlevels)
+        object$xlevels[[par]][[rm.term]] <- c(oldlevels, newlevels)
+      }
     }
 
     if (adjust) {
@@ -189,7 +191,7 @@ predict_score.gamlss2 <-
     # Compute the requested score using the family's own distribution functions.
     switch(
       type,
-      "cent" = object$family$cdf(q = newdata[,feat], par = params),    # CDF at y -> centile in [0,1]
+      "cent" = object$family$cdf(newdata[,feat], par = params),        # CDF at y -> centile in [0,1]
       "resid" = newdata[,feat] - params[,1],                           # raw residual y - mu
       "zscore" = (newdata[,feat] - params[,1])/params[,2],             # (y - mu)/sigma
       "quantile" = object$family$rqres(newdata[,feat], par = params),  # (randomized) quantile residuals on N(0,1) scale
@@ -220,7 +222,7 @@ predict_score.gamlss <-
       warning("Z-scores may not be valid for families other than NO")
     }
 
-    feat <- as.character(object$mu.formula[[2]])
+    feat <- as.character(object$formula[[2]])
 
     # Resolve the adjustment spec: honor explicit args, else auto-derive from the
     # moments containing rm.term (adjust those, freeze the rest).

@@ -6,13 +6,17 @@
 skip_if_not_installed("gamlss2")
 
 # gold standard: a fit that INCLUDES the batch level, scored in-sample.
-gold_g2 <- function(fitA, score_dat)
-  fitA$family$cdf(q = score_dat$y,
+gold_g2 <- function(fitA, score_dat) {
+  fitA$family$cdf(score_dat$y,
                   par = predict(fitA, newdata = score_dat, type = "parameter"))
+}
+
 
 # resolved (auto) spec for a gamlss2 fit
-auto_spec_g2 <- function(fit, rm.term = "site")
+auto_spec_g2 <- function(fit, rm.term = "site") {
   .resolve_adjust_spec(NULL, NULL, .moment_formulas_gamlss2(fit), rm.term)
+}
+
 
 ## ---- gamlss2: correct moment selection -------------------------------------
 

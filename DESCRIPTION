@@ -11,14 +11,16 @@ Encoding: UTF-8
 LazyData: true
 Depends: gamlss2
 Imports:
-    Formula,
-    stats
+  Formula,
+  stats
 Suggests:
-    gamlss,
-    gamlss.dist,
-    gamlssTools,
-    testthat (>= 3.0.0)
-Remotes: BGDlab/gamlssTools
+  gamlss,
+  gamlss.dist,
+  gamlssTools,
+  testthat (>= 3.0.0)
+Remotes:
+  BGDlab/gamlssTools
+  gamlss-dev/gamlss2@ff773528ed42a505522bc24fbd30dc2ef6f0563f
 Config/testthat/edition: 3
 RoxygenNote: 7.3.3
 Roxygen: list(markdown = TRUE)

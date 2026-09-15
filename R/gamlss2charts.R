@@ -137,6 +137,7 @@ predict_score.gamlss2 <-
         oldlevels <- object$xlevels[[par]][[rm.term]]
         newlevels <- setdiff(levels(newdata[[rm.term]]), oldlevels)
         object$xlevels[[par]][[rm.term]] <- c(oldlevels, newlevels)
+        object$mf.xlevels[[rm.term]] <- c(oldlevels, newlevels)
       }
     }
 

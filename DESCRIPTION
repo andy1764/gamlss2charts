@@ -20,7 +20,7 @@ Suggests:
   testthat (>= 3.0.0)
 Remotes:
   BGDlab/gamlssTools
-  gamlss-dev/gamlss2@ff773528ed42a505522bc24fbd30dc2ef6f0563f
+  gamlss-dev/gamlss2@f34c74275db05bc3194ebea964f009eb87ab1f4d
 Config/testthat/edition: 3
 RoxygenNote: 7.3.3
 Roxygen: list(markdown = TRUE)

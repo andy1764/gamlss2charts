@@ -19,7 +19,7 @@ Suggests:
   gamlssTools,
   testthat (>= 3.0.0)
 Remotes:
-  BGDlab/gamlssTools
+  BGDlab/gamlssTools,
   gamlss-dev/gamlss2@f34c74275db05bc3194ebea964f009eb87ab1f4d
 Config/testthat/edition: 3
 RoxygenNote: 7.3.3

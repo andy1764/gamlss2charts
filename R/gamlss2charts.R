@@ -362,13 +362,11 @@ predict_score.list <-
     }
 
     which.params <- setNames(1:4, c("mu", "sigma", "nu", "tau"))[which.params]
-    # If no refdata, reuse newdata and use the supplied $new params as the reference
-    # offsets. POTENTIAL BUG: `pred2` is only assigned inside this branch. If refdata
-    # IS supplied, pred2 is never set, so cbind(refdata, pred2) below errors. This
-    # likely should fall back to object$ref when refdata is provided.
     if (is.null(refdata)) {
       refdata <- newdata
       pred2 <- object$new
+    } else {
+      pred2 <- object$ref
     }
 
     newdata$y <- newdata[[feat]]  # `y` columns for the trivial fit / offsets

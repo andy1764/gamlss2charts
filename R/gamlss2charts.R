@@ -102,7 +102,7 @@ predict_score <- function(object, ...) UseMethod("predict_score")
 predict_score.gamlss2 <-
   function(object, newdata, refdata = NULL,
            # `type` default is the first element, "cent" (centile score).
-           type = c("cent", "resid", "zscore", "quantile", "parameter", "logLik"),
+           type = c("cent", "resid", "zscore", "quantile", "parameter", "logLik", "model"),
            rm.term = NULL, adjust = TRUE, which.params = NULL,
            newformula = NULL) {
     type = match.arg(type)
@@ -189,7 +189,8 @@ predict_score.gamlss2 <-
       "zscore" = (newdata[,feat] - params[,1])/params[,2],             # (y - mu)/sigma
       "quantile" = object$family$rqres(newdata[,feat], par = params),  # (randomized) quantile residuals on N(0,1) scale
       "parameter" = params,                                            # the fitted parameters themselves
-      "logLik" = sum(object$family$pdf(newdata[,feat], par = params, log = TRUE))
+      "logLik" = sum(object$family$pdf(newdata[,feat], par = params, log = TRUE)),
+      "model" = fit2
     )
   }
 
@@ -350,7 +351,7 @@ predict_score.gamlss <-
 #' @export
 predict_score.list <-
   function(object, newdata, refdata = NULL, feat, family,
-           type = c("cent", "resid", "zscore", "quantile", "parameter"),
+           type = c("cent", "resid", "zscore", "quantile", "parameter", "logLik", "model"),
            adjust = TRUE, rm.term = NULL,
            newformula = y ~ offset(mu) | offset(sigma),
            which.params = c("mu", "sigma")) {
@@ -402,6 +403,8 @@ predict_score.list <-
       "resid" = newdata[,feat] - params[,1],
       "zscore" = (newdata[,feat] - params[,1])/params[,2],
       "quantile" = fit$family$rqres(newdata[,feat], par = params),
-      "parameter" = params
+      "parameter" = params,
+      "logLik" = sum(fit$family$pdf(newdata[,feat], par = params, log = TRUE)),
+      "model" = fit2
     )
   }
